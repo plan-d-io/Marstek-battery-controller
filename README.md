@@ -4,11 +4,11 @@
 [![GitHub Issues](https://img.shields.io/github/issues/plan-d-io/Marstek-battery-controller)](https://github.com/plan-d-io/Marstek-battery-controller/issues)
 [![Downloads](https://img.shields.io/github/downloads/plan-d-io/Marstek-battery-controller/total)](https://github.com/plan-d-io/Marstek-battery-controller/releases)
 
-Custom Home Assistant integration that orchestrates a **Marstek Venus E** home battery for **self-consumption**, optional **pre-evening grid charging**, **passive evening floor protection**, and a **manual override**.
+Custom Home Assistant integration that controls a **Marstek Venus E** home battery for **self-consumption**, **peak consumption compensation** with optional **pre-evening grid charging**, and full **manual control**. It's meant as a more robust replacement for the default Marstek control, which can be spotty, also offering additional features like preserving some energy to avoid consumption peaks (e.g. during the evening, where under normal control the battery could already be empty).
 
-Control is applied **only via standard Home Assistant services** (`switch`, `select`, `number`) on entities exposed by the **`marstek_modbus`** integration—the controller does **not** open Modbus TCP/RTU sockets itself.
+This integration leverages the [**`marstek_modbus`** integration](https://github.com/ViperRNMC/marstek_venus_modbus) by [ViperRNMC](https://github.com/ViperRNMC), which takes care of the Modbus communication to the Marstek battery. 
 
-All controller entities are grouped under **one device** (with optional linkage to your Marstek hardware when discovery is used). Translation files are shipped for **English**, **English (GB)**, **Dutch**, **French**, and **German** (`translations/`). **Important:** HA’s **Settings → System → General → Language** drives entity names from those files; align it with your profile language if labels look wrong.
+Everything this integration does can also be done using automations and template sensors, or NodeRED, but if you're looking for an easy solution and are using HACS, this integration is perhaps for you.
 
 ## Screenshots
 
@@ -16,21 +16,28 @@ All controller entities are grouped under **one device** (with optional linkage 
 
 ## Requirements
 
-| Requirement | Notes |
-|-------------|--------|
-| Home Assistant Core | **2025.9** or newer |
-| **`marstek_modbus`** | Install via HACS and configure your Venus E device |
+- Home Assistant `2025.9` or later
+- HACS installed
+- [ViperRNMC `marstek_modbus` integration](https://github.com/ViperRNMC/marstek_venus_modbus) installed
+- Grid power measurements (preferably a P1 dongle)
 
-## Features
+Recommended:
+- Marstek Venus E firmware v144 or later
+- Marstek Venus E connected over wired ethernet
 
-- **Operating modes:** Released, self-consumption, self-consumption + evening peak boost, self-consumption + passive evening peak, manual (see architecture spec §6).
-- **Grid coupling:** Signed grid power (**W**) with smoothing; configurable send interval and power clamps.
-- **Capacity tariff helpers:** Compare current quarter-hour demand (`cap_now`) against an effective ceiling (desired max peak vs optional monthly peak sensor).
-- **Laadplanning (§10):** Computes latest start time for evening boost when pre-evening charging is needed.
-- **Diagnostics:** Operating state, reason codes, smoothed powers, optional internal `cap_now` surrogate when no external sensor is configured.
-- **Safety / robustness:** SoC guards, restart write grace, sensor-loss handling, repeated Modbus failure Repair issue (§16).
+From firmware v144, the Modbus interface is also exposed over the wired ethernet port, removing the need for RS-485 converters like the Elfin. 
+
+
+## Operating modes
+
+- **Released**: relinquishes control back to the Marstek app
+- **Self-consumption**: text-book self-consumption: charge with excess power that would otherwise be injected into the grid until SoC reaches max value, discharge to compensate power draw from the grid untill SoC reaches the min value
+- **Self-consumption + evening peak boost**
+- **Self-consumption + passive evening peak**
+- **Manual**
 
 ## Installation
+Make sure you have [ViperRNMC `marstek_modbus` integration](https://github.com/ViperRNMC/marstek_venus_modbus) installed first!
 
 ### HACS
 
