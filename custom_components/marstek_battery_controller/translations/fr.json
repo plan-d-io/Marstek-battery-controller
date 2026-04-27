@@ -135,7 +135,7 @@
     "switch": {
       "capacity_tariff_enabled": { "name": "Tarif capacitaire activé" }
     },
-    "datetime": {
+    "time": {
       "evening_peak_start": { "name": "Début pic du soir" },
       "passive_floor_protection_start": { "name": "Début protection passive du plancher" }
     },

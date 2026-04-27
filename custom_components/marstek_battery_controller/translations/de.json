@@ -135,7 +135,7 @@
     "switch": {
       "capacity_tariff_enabled": { "name": "Kapazitätstarif aktiv" }
     },
-    "datetime": {
+    "time": {
       "evening_peak_start": { "name": "Abendspitzenbeginn" },
       "passive_floor_protection_start": { "name": "Passiver Bodenschutz Beginn" }
     },

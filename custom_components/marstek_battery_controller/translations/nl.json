@@ -135,7 +135,7 @@
     "switch": {
       "capacity_tariff_enabled": { "name": "Capaciteitstarief ingeschakeld" }
     },
-    "datetime": {
+    "time": {
       "evening_peak_start": { "name": "Avondpiek start" },
       "passive_floor_protection_start": { "name": "Passieve vloerbescherming start" }
     },

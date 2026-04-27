@@ -10,7 +10,7 @@ from . import const
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["select", "number", "switch", "datetime", "button", "sensor"]
+PLATFORMS = ["select", "number", "switch", "time", "button", "sensor"]
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry

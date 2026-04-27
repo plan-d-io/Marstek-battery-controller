@@ -1,18 +1,17 @@
-"""Time-of-day parameters (evening peak, passive floor start)."""
+"""Time-of-day parameters (evening peak, passive floor start) — time-only UI."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import time
 import logging
 
-from homeassistant.components.datetime import DateTimeEntity
+from homeassistant.components.time import TimeEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
 
 from . import const
 from .coordinator import MarstekBatteryCoordinator
@@ -26,19 +25,19 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up datetime entities."""
+    """Set up time entities."""
     coordinator: MarstekBatteryCoordinator = hass.data[const.DOMAIN][entry.entry_id]
     dev_info = marstek_controller_device_info(hass, entry)
     async_add_entities(
         [
-            MarstekEveningPeakDatetime(coordinator, entry.entry_id, dev_info),
-            MarstekPassiveFloorDatetime(coordinator, entry.entry_id, dev_info),
+            MarstekEveningPeakTime(coordinator, entry.entry_id, dev_info),
+            MarstekPassiveFloorTime(coordinator, entry.entry_id, dev_info),
         ]
     )
 
 
-class MarstekEveningPeakDatetime(CoordinatorEntity[MarstekBatteryCoordinator], DateTimeEntity):
-    """§7 — Evening peak start (time)."""
+class MarstekEveningPeakTime(CoordinatorEntity[MarstekBatteryCoordinator], TimeEntity):
+    """§7 — Evening peak start (wall-clock time only)."""
 
     _attr_has_entity_name = True
     _attr_translation_key = const.ENTITY_EVENING_PEAK_START
@@ -57,21 +56,19 @@ class MarstekEveningPeakDatetime(CoordinatorEntity[MarstekBatteryCoordinator], D
         self._attr_device_info = device_info
 
     @property
-    def native_value(self) -> datetime | None:
-        """Today's date with configured peak time."""
-        now = dt_util.now()
-        t = self.coordinator.evening_peak_time_value
-        return datetime.combine(now.date(), t, tzinfo=now.tzinfo)
+    def native_value(self) -> time | None:
+        """Configured peak time."""
+        return self.coordinator.evening_peak_time_value
 
-    async def async_set_value(self, value: datetime) -> None:
+    async def async_set_value(self, value: time) -> None:
         """Persist new peak time."""
         self.coordinator.set_evening_peak_time(value)
         self.coordinator.persist_entry_options(self.hass, self._entry_id)
         self.async_write_ha_state()
 
 
-class MarstekPassiveFloorDatetime(CoordinatorEntity[MarstekBatteryCoordinator], DateTimeEntity):
-    """§7 — Passive floor-protection start (time)."""
+class MarstekPassiveFloorTime(CoordinatorEntity[MarstekBatteryCoordinator], TimeEntity):
+    """§7 — Passive floor-protection start (wall-clock time only)."""
 
     _attr_has_entity_name = True
     _attr_translation_key = const.ENTITY_PASSIVE_FLOOR_PROTECTION_START
@@ -90,13 +87,11 @@ class MarstekPassiveFloorDatetime(CoordinatorEntity[MarstekBatteryCoordinator], 
         self._attr_device_info = device_info
 
     @property
-    def native_value(self) -> datetime | None:
-        """Today's date with configured protection start time."""
-        now = dt_util.now()
-        t = self.coordinator.passive_floor_time_value
-        return datetime.combine(now.date(), t, tzinfo=now.tzinfo)
+    def native_value(self) -> time | None:
+        """Configured protection start time."""
+        return self.coordinator.passive_floor_time_value
 
-    async def async_set_value(self, value: datetime) -> None:
+    async def async_set_value(self, value: time) -> None:
         """Persist new protection start time."""
         self.coordinator.set_passive_floor_time(value)
         self.coordinator.persist_entry_options(self.hass, self._entry_id)

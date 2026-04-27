@@ -9,6 +9,7 @@ from typing import Callable
 from homeassistant.components.number import NumberEntity, NumberEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfPower
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -35,6 +36,7 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_MIN_SOC,
             translation_key=const.ENTITY_MIN_SOC,
+            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement=PERCENTAGE,
             native_min_value=const.MIN_SOC_PCT,
             native_max_value=const.MAX_SOC_PCT,
@@ -46,6 +48,7 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_MAX_SOC,
             translation_key=const.ENTITY_MAX_SOC,
+            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement=PERCENTAGE,
             native_min_value=const.MIN_SOC_PCT,
             native_max_value=const.MAX_SOC_PCT,
@@ -57,6 +60,7 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_MAX_BATTERY_POWER,
             translation_key=const.ENTITY_MAX_BATTERY_POWER,
+            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement=UnitOfPower.WATT,
             native_min_value=const.MIN_BATTERY_POWER_W,
             native_max_value=const.MAX_BATTERY_POWER_LIMIT_W,
@@ -68,6 +72,7 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_SEND_INTERVAL,
             translation_key=const.ENTITY_SEND_INTERVAL,
+            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement="s",
             native_min_value=const.MIN_SEND_INTERVAL_S,
             native_max_value=const.MAX_SEND_INTERVAL_S,
@@ -79,6 +84,7 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_GRID_SMOOTHING_WINDOW,
             translation_key=const.ENTITY_GRID_SMOOTHING_WINDOW,
+            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement="s",
             native_min_value=const.MIN_SMOOTHING_WINDOW_S,
             native_max_value=const.MAX_SMOOTHING_WINDOW_S,
@@ -90,6 +96,7 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_BATTERY_SMOOTHING_WINDOW,
             translation_key=const.ENTITY_BATTERY_SMOOTHING_WINDOW,
+            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement="s",
             native_min_value=const.MIN_SMOOTHING_WINDOW_S,
             native_max_value=const.MAX_SMOOTHING_WINDOW_S,
@@ -101,6 +108,7 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_BATTERY_CAPACITY,
             translation_key=const.ENTITY_BATTERY_CAPACITY,
+            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement="Wh",
             native_min_value=const.MIN_BATTERY_CAPACITY_WH,
             native_max_value=const.MAX_BATTERY_CAPACITY_WH,
@@ -112,6 +120,7 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_EVENING_MIN_SOC,
             translation_key=const.ENTITY_EVENING_MIN_SOC,
+            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement=PERCENTAGE,
             native_min_value=const.MIN_SOC_PCT,
             native_max_value=const.MAX_SOC_PCT,
@@ -123,6 +132,7 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_EVENING_MAX_CHARGE_POWER,
             translation_key=const.ENTITY_EVENING_MAX_CHARGE_POWER,
+            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement=UnitOfPower.WATT,
             native_min_value=const.MIN_EVENING_CHARGE_POWER_W,
             native_max_value=const.MAX_BATTERY_POWER_LIMIT_W,
