@@ -65,18 +65,6 @@ Copy the folder `custom_components/marstek_battery_controller/` into your Home A
 
 Validation rules: **min SoC < max SoC**; **evening max charge ≤ max battery power**; **manual power ≤ max battery power** (options flow). If **passive floor start** equals **evening peak start**, the passive protection window is empty and a warning is logged.
 
-### Controls vs configuration (UI)
-
-Home Assistant splits the device card into **Controls** (primary interaction) and **Configuration** (advanced parameters) using **entity categories**.
-
-- **Controls:** mode select, max desired 15‑min peak, manual target SoC, manual power, manual trigger button.
-- **Configuration:** remaining numbers (limits, smoothing, battery capacity, evening settings), capacity tariff switch, evening peak start / passive floor‑protection start (**time** entities—clock only, no date picker).
-
-### Translation / language notes
-
-- Translation files: `en.json`, `en-GB.json`, `nl.json`, `fr.json`, `de.json`.
-- If friendly names do not match your profile language, check **Settings → System → General → Language** as well as your **user profile** language (HA resolves integration strings from the general language in many views).
-
 ## Entities
 
 ### Select
@@ -85,7 +73,7 @@ Home Assistant splits the device card into **Controls** (primary interaction) an
 |--------|---------|
 | **Mode** | `released`, `self_consumption`, `self_consumption_evening_peak`, `self_consumption_passive_evening_peak`, `manual` (labels are translated). |
 
-### Numbers (§7)
+### Numbers
 
 | Entity | Purpose |
 |--------|---------|
@@ -122,7 +110,7 @@ Wall-clock controls (**no date picker**):
 |--------|---------|
 | Manual trigger | Validates target ≠ current SoC and enters manual mode |
 
-### Sensors (diagnostics, §14)
+### Sensors
 
 | Entity | Purpose |
 |--------|---------|
@@ -140,28 +128,7 @@ Wall-clock controls (**no date picker**):
 
 ## Device-native alternative (not used here)
 
-Marstek firmware exposes Modbus register **42011** (`charge_to_soc`) as a built-in way to charge to a target SoC. **This integration does not use that register**; manual mode and auto-exit are implemented in Python per the architecture specification (§6.6, §13.2).
-
-## Troubleshooting
-
-| Symptom | What to check |
-|---------|----------------|
-| Integration fails at setup | `marstek_modbus` running; device has entities with `unique_id` suffixes `battery_soc`, `ac_power`, `rs485_control_mode`, `force_mode`, `set_charge_power`, `set_discharge_power`. |
-| “Roles not resolved” | Use manual entity mapping in the config flow. |
-| No writes | Mode `released`, or within **60 s** restart grace; check logs for grace completion. |
-| Frequent Released | Grid, SoC, or battery AC unavailable **> 60 s** — integration forces Released (§16). |
-| Writes fail | Same setpoint retried each tick; after **5** failures an **issue** is raised (§16). |
-| Boost never starts | Laadplanning returned `no_need` (SoC ≥ evening min) or outside `[latest_start, evening_peak)`. |
-
-Enable **debug** logging for `custom_components.marstek_battery_controller` to see each calculation and Modbus sequence (§18).
-
-## Development / tests
-
-```bash
-python -m pytest tests/components/marstek_battery_controller/
-```
-
-Unit tests cover `calculator.py`, `smoothing.py`, and laadplanning (§10) without requiring Home Assistant to be installed.
+Marstek firmware exposes Modbus register **42011** (`charge_to_soc`) as a built-in way to charge to a target SoC. **This integration does not use that register**; manual mode and auto-exit are implemented explicitely to retain full visibility of what the battery is doing.
 
 ## Localization
 
