@@ -3,7 +3,7 @@
   "issues": {
     "marstek_unavailable": {
       "title": "Marstek Modbus-entiteiten niet gevonden",
-      "description": "Het geconfigureerde Marstek-apparaat levert de vereiste entiteiten niet meer. Controleer de marstek_modbus-integratie."
+      "description": "Het geconfigureerde Marstek-apparaat levert de vereiste entiteiten niet (meer). Controleer de marstek_modbus-integratie."
     },
     "sensor_unavailable": {
       "title": "Kritieke sensor niet beschikbaar",
@@ -38,7 +38,7 @@
       },
       "grid": {
         "title": "Netvermogen",
-        "description": "Selecteer de sensor voor netafname/injectie zoals de digitale meter die meet (elke integratie die een sensor met vermogensklasse exposeert). Positief = afname van het net; negatief = invoeding.",
+        "description": "Selecteer de sensor voor netafname/injectie zoals de digitale meter die meet (elke integratie die een sensor met vermogensklasse exposeert). Positief = afname van het net; negatief = injectie.",
         "data": {
           "grid_power_entity": "Netvermogen sensor"
         }
@@ -61,13 +61,13 @@
           "battery_capacity": "Batterijcapaciteit",
           "capacity_tariff_enabled": "Capaciteitstarief ingeschakeld",
           "send_interval": "Interval batterijcommando’s verzenden",
-          "grid_smoothing": "Venster netvermogen middelen",
-          "battery_smoothing": "Venster batterijvermogen middelen",
-          "evening_min_soc": "Avond min SoC",
-          "evening_max_charge_power": "Avond max laadvermogen",
-          "max_desired_peak": "Gewenste max 15-min piek",
-          "evening_peak_time": "Avondpiek start (UU:MM)",
-          "passive_floor_time": "Passieve vloerbescherming start (UU:MM)"
+          "grid_smoothing": "Netvermogen uitmiddellingsvenster",
+          "battery_smoothing": "Batterijvermogen uitmiddellingsvenster",
+          "evening_min_soc": "Minimale SoC voor avondpiek",
+          "evening_max_charge_power": "Maximaal laadvermogen voor avondpiek",
+          "max_desired_peak": "Maximale 15-min piek",
+          "evening_peak_time": "Avondpiek start",
+          "passive_floor_time": "SoC bescherming start (passieve modus)"
         }
       },
       "init": {
@@ -81,15 +81,15 @@
           "battery_capacity": "Batterijcapaciteit",
           "capacity_tariff_enabled": "Capaciteitstarief ingeschakeld",
           "send_interval": "Interval batterijcommando’s verzenden",
-          "grid_smoothing": "Venster netvermogen middelen",
-          "battery_smoothing": "Venster batterijvermogen middelen",
-          "evening_min_soc": "Avond min SoC",
-          "evening_max_charge_power": "Avond max laadvermogen",
+          "grid_smoothing": "Netvermogen uitmiddellingsvenster",
+          "battery_smoothing": "Batterijvermogen uitmiddellingsvenster",
+          "evening_min_soc": "Minimale SoC voor avondpiek",
+          "evening_max_charge_power": "Maximaal laadvermogen voor avondpiek",
           "max_desired_peak": "Gewenste max 15-min piek",
-          "manual_target_soc": "Manueel doel-SoC",
-          "manual_power": "Manueel vermogen",
-          "evening_peak_time": "Avondpiek start (UU:MM)",
-          "passive_floor_time": "Passieve vloerbescherming start (UU:MM)"
+          "manual_target_soc": "Gewenste SoC (manueel)",
+          "manual_power": "Gewenst batterijvermogen (manueel)",
+          "evening_peak_time": "Avondpiek start",
+          "passive_floor_time": "SoC bescherming start (passieve modus)"
         }
       }
     },
@@ -124,36 +124,36 @@
       "max_battery_power": { "name": "Max batterijvermogen" },
       "send_interval": { "name": "Interval batterijcommando’s verzenden" },
       "grid_smoothing_window": { "name": "Venster netvermogen middelen" },
-      "battery_smoothing_window": { "name": "Venster batterijvermogen middelen" },
+      "battery_smoothing_window": { "name": "Batterijvermogen uitmiddellingsvenster" },
       "battery_capacity": { "name": "Batterijcapaciteit" },
-      "evening_min_soc": { "name": "Avond min SoC" },
-      "evening_max_charge_power": { "name": "Avond max laadvermogen" },
+      "evening_min_soc": { "name": "Minimale SoC voor avondpiekC" },
+      "evening_max_charge_power": { "name": "Maximaal laadvermogen voor avondpiek" },
       "max_desired_peak": { "name": "Gewenste max 15-min piek" },
-      "manual_target_soc": { "name": "Manueel doel-SoC" },
-      "manual_power": { "name": "Manueel vermogen" }
+      "manual_target_soc": { "name": "Gewenste SoC (manueel)" },
+      "manual_power": { "name": "Gewenst batterijvermogen (manueel)" }
     },
     "switch": {
       "capacity_tariff_enabled": { "name": "Capaciteitstarief ingeschakeld" }
     },
     "time": {
       "evening_peak_start": { "name": "Avondpiek start" },
-      "passive_floor_protection_start": { "name": "Passieve vloerbescherming start" }
+      "passive_floor_protection_start": { "name": "SoC bescherming start (passieve modus)" }
     },
     "button": {
-      "manual_trigger": { "name": "Manuele trigger" }
+      "manual_trigger": { "name": "Stuur manueel commando" }
     },
     "sensor": {
-      "target_setpoint": { "name": "Doel instelpunt" },
-      "last_sent_setpoint": { "name": "Laatst verzonden instelpunt" },
+      "target_setpoint": { "name": "Target setpoint" },
+      "last_sent_setpoint": { "name": "Laatst verzonden setpoint" },
       "operating_state": { "name": "Bedrijfsstatus" },
-      "reason_code": { "name": "Redencode" },
+      "reason_code": { "name": "Statuscode" },
       "latest_start_charge": { "name": "Laatste start laden" },
-      "effective_cap_threshold": { "name": "Effectieve capaciteitsdrempel" },
-      "grid_power_smoothed": { "name": "Gladgestreken netvermogen" },
-      "battery_power_smoothed": { "name": "Gladgestreken batterijvermogen" },
+      "effective_cap_threshold": { "name": "Huidig maximaal piekvermogen" },
+      "grid_power_smoothed": { "name": "Uitgemiddeld netvermogen" },
+      "battery_power_smoothed": { "name": "Uitgemiddeld batterijvermogen" },
       "cap_now_internal": { "name": "Cap nu (intern)" },
       "minutes_to_evening_peak": { "name": "Minuten tot avondpiek" },
-      "energy_needed_for_evening": { "name": "Energie nodig voor avond" }
+      "energy_needed_for_evening": { "name": "Energie nodig voor avondpiek" }
     }
   }
 }
