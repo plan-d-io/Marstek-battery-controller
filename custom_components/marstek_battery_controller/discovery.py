@@ -54,7 +54,15 @@ def resolve_roles_for_device(hass: HomeAssistant, device_id: str) -> ResolvedEnt
     ent_reg = er.async_get(hass)
     roles: dict[str, str] = {}
     for entity_entry in er.async_entries_for_device(ent_reg, device_id):
-        uid = entity_entry.unique_id or ""
+        uid_raw = entity_entry.unique_id
+        try:
+            uid = "" if uid_raw is None else str(uid_raw)
+        except Exception:
+            _LOGGER.warning(
+                "Skipping entity %s with non-stringifiable unique_id",
+                entity_entry.entity_id,
+            )
+            continue
         if not uid:
             continue
         matched: str | None = None

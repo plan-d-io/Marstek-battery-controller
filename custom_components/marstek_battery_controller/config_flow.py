@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -17,6 +18,8 @@ from homeassistant.helpers.selector import SelectSelectorMode
 from . import const
 from .discovery import list_marstek_devices, resolve_roles_for_device
 
+_LOGGER = logging.getLogger(__name__)
+
 STEP_ID_MANUAL = "manual_devices"
 STEP_ID_GRID = "grid"
 STEP_ID_OPTIONAL = "optional"
@@ -29,9 +32,20 @@ def _power_sensor_selector() -> selector.EntitySelector:
         selector.EntitySelectorConfig(
             domain="sensor",
             device_class=SensorDeviceClass.POWER,
-            unit_of_measurement=UnitOfPower.WATT,
+            unit_of_measurement="W",
         )
     )
+
+
+def _manual_toggle_is_on(raw: Any) -> bool:
+    """Normalize BooleanSelector payloads (frontend may vary by HA version)."""
+    if raw is True:
+        return True
+    if raw is False or raw is None:
+        return False
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("true", "on", "yes", "1")
+    return bool(raw)
 
 
 def _optional_powerish_selector() -> selector.EntitySelector:
@@ -233,7 +247,7 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
         """§5.1 — device or manual."""
         devices = list_marstek_devices(self.hass)
         if user_input is not None:
-            if user_input.get("manual"):
+            if _manual_toggle_is_on(user_input.get("manual")):
                 self._use_manual = True
                 self._picked_device_id = None
                 return await self.async_step_manual_devices()
@@ -244,14 +258,25 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
                     data_schema=self._schema_user_pick(devices),
                     errors={"base": "device_required"},
                 )
-            resolved = resolve_roles_for_device(self.hass, device_id)
+            try:
+                resolved = resolve_roles_for_device(self.hass, str(device_id))
+            except Exception:
+                _LOGGER.exception(
+                    "Role discovery raised for device_id=%s",
+                    device_id,
+                )
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=self._schema_user_pick(devices),
+                    errors={"base": "discovery_failed"},
+                )
             if resolved is None:
                 return self.async_show_form(
                     step_id="user",
                     data_schema=self._schema_user_pick(devices),
                     errors={"base": "discovery_failed"},
                 )
-            self._picked_device_id = device_id
+            self._picked_device_id = str(device_id)
             self._use_manual = False
             return await self.async_step_grid()
 
@@ -265,11 +290,19 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
         )
 
     def _schema_user_pick(self, devices: list[tuple[str, str]]) -> vol.Schema:
-        opts = {did: f"{name} ({did})" for did, name in devices}
+        """Device list must use SelectSelector value/label pairs (not vol.In(dict))."""
+        device_options: list[dict[str, str]] = [
+            {"value": did, "label": f"{name} ({did})"} for did, name in devices
+        ]
         return vol.Schema(
             {
                 vol.Optional("manual", default=False): selector.BooleanSelector(),
-                vol.Optional(const.CONF_MARSTEK_DEVICE_ID): vol.In(opts),
+                vol.Optional(const.CONF_MARSTEK_DEVICE_ID): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=device_options,
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
             }
         )
 
