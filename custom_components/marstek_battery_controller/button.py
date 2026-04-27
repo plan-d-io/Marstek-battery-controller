@@ -7,10 +7,12 @@ import logging
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import const
+from .device_helpers import marstek_controller_device_info
 from .coordinator import MarstekBatteryCoordinator, parse_optional_float_state
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,7 +25,13 @@ async def async_setup_entry(
 ) -> None:
     """Set up button."""
     coordinator: MarstekBatteryCoordinator = hass.data[const.DOMAIN][entry.entry_id]
-    async_add_entities([MarstekManualTriggerButton(coordinator, entry.entry_id)])
+    async_add_entities(
+        [
+            MarstekManualTriggerButton(
+                coordinator, entry.entry_id, marstek_controller_device_info(hass, entry)
+            )
+        ]
+    )
 
 
 class MarstekManualTriggerButton(CoordinatorEntity[MarstekBatteryCoordinator], ButtonEntity):
@@ -32,11 +40,17 @@ class MarstekManualTriggerButton(CoordinatorEntity[MarstekBatteryCoordinator], B
     _attr_has_entity_name = True
     _attr_translation_key = const.ENTITY_MANUAL_TRIGGER
 
-    def __init__(self, coordinator: MarstekBatteryCoordinator, entry_id: str) -> None:
+    def __init__(
+        self,
+        coordinator: MarstekBatteryCoordinator,
+        entry_id: str,
+        device_info: DeviceInfo,
+    ) -> None:
         """Initialize."""
         super().__init__(coordinator)
         self._entry_id = entry_id
         self._attr_unique_id = f"{entry_id}_{const.ENTITY_MANUAL_TRIGGER}"
+        self._attr_device_info = device_info
 
     async def async_press(self) -> None:
         """Validate and enter manual mode."""

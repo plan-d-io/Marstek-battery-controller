@@ -10,11 +10,13 @@ from homeassistant.components.number import NumberEntity, NumberEntityDescriptio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfPower
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import const
 from .coordinator import MarstekBatteryCoordinator
+from .device_helpers import marstek_controller_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -172,8 +174,9 @@ async def async_setup_entry(
 ) -> None:
     """Set up number entities."""
     coordinator: MarstekBatteryCoordinator = hass.data[const.DOMAIN][entry.entry_id]
+    dev_info = marstek_controller_device_info(hass, entry)
     entities = [
-        MarstekCoordinatorNumber(coordinator, entry.entry_id, desc)
+        MarstekCoordinatorNumber(coordinator, entry.entry_id, desc, dev_info)
         for desc in _descriptions()
     ]
     async_add_entities(entities)
@@ -193,12 +196,14 @@ class MarstekCoordinatorNumber(
         coordinator: MarstekBatteryCoordinator,
         entry_id: str,
         description: MarstekNumberEntityDescription,
+        device_info: DeviceInfo,
     ) -> None:
         """Initialize."""
         super().__init__(coordinator)
         self.entity_description = description
         self._entry_id = entry_id
         self._attr_unique_id = f"{entry_id}_{description.key}"
+        self._attr_device_info = device_info
 
     @property
     def native_value(self) -> float | None:

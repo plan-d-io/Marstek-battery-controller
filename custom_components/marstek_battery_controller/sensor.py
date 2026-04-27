@@ -10,17 +10,18 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
-    SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfPower, UnitOfTime
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import const
 from .coordinator import MarstekBatteryCoordinator
+from .device_helpers import marstek_controller_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -135,7 +136,6 @@ def _all_descriptions(
                 native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
                 device_class=SensorDeviceClass.ENERGY,
                 entity_category=EntityCategory.DIAGNOSTIC,
-                state_class=SensorStateClass.MEASUREMENT,
                 value_fn=lambda c: c.diagnostic_energy_needed_evening_wh(),
             ),
         ]
@@ -150,8 +150,9 @@ async def async_setup_entry(
 ) -> None:
     """Create diagnostic sensors."""
     coordinator: MarstekBatteryCoordinator = hass.data[const.DOMAIN][entry.entry_id]
+    dev_info = marstek_controller_device_info(hass, entry)
     entities = [
-        MarstekDiagnosticSensor(coordinator, entry.entry_id, d)
+        MarstekDiagnosticSensor(coordinator, entry.entry_id, d, dev_info)
         for d in _all_descriptions(coordinator.runtime.use_internal_cap_now)
     ]
     async_add_entities(entities)
@@ -171,11 +172,13 @@ class MarstekDiagnosticSensor(
         coordinator: MarstekBatteryCoordinator,
         entry_id: str,
         description: MarstekDiagDescription,
+        device_info: DeviceInfo,
     ) -> None:
         """Initialize."""
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{entry_id}_{description.key}"
+        self._attr_device_info = device_info
 
     @property
     def native_value(self) -> StateType | datetime | None:

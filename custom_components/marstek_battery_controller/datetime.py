@@ -9,12 +9,14 @@ from homeassistant.components.datetime import DateTimeEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import const
 from .coordinator import MarstekBatteryCoordinator
+from .device_helpers import marstek_controller_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,10 +28,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up datetime entities."""
     coordinator: MarstekBatteryCoordinator = hass.data[const.DOMAIN][entry.entry_id]
+    dev_info = marstek_controller_device_info(hass, entry)
     async_add_entities(
         [
-            MarstekEveningPeakDatetime(coordinator, entry.entry_id),
-            MarstekPassiveFloorDatetime(coordinator, entry.entry_id),
+            MarstekEveningPeakDatetime(coordinator, entry.entry_id, dev_info),
+            MarstekPassiveFloorDatetime(coordinator, entry.entry_id, dev_info),
         ]
     )
 
@@ -41,11 +44,17 @@ class MarstekEveningPeakDatetime(CoordinatorEntity[MarstekBatteryCoordinator], D
     _attr_translation_key = const.ENTITY_EVENING_PEAK_START
     _attr_entity_category = EntityCategory.CONFIG
 
-    def __init__(self, coordinator: MarstekBatteryCoordinator, entry_id: str) -> None:
+    def __init__(
+        self,
+        coordinator: MarstekBatteryCoordinator,
+        entry_id: str,
+        device_info: DeviceInfo,
+    ) -> None:
         """Initialize."""
         super().__init__(coordinator)
         self._entry_id = entry_id
         self._attr_unique_id = f"{entry_id}_{const.ENTITY_EVENING_PEAK_START}"
+        self._attr_device_info = device_info
 
     @property
     def native_value(self) -> datetime | None:
@@ -68,11 +77,17 @@ class MarstekPassiveFloorDatetime(CoordinatorEntity[MarstekBatteryCoordinator], 
     _attr_translation_key = const.ENTITY_PASSIVE_FLOOR_PROTECTION_START
     _attr_entity_category = EntityCategory.CONFIG
 
-    def __init__(self, coordinator: MarstekBatteryCoordinator, entry_id: str) -> None:
+    def __init__(
+        self,
+        coordinator: MarstekBatteryCoordinator,
+        entry_id: str,
+        device_info: DeviceInfo,
+    ) -> None:
         """Initialize."""
         super().__init__(coordinator)
         self._entry_id = entry_id
         self._attr_unique_id = f"{entry_id}_{const.ENTITY_PASSIVE_FLOOR_PROTECTION_START}"
+        self._attr_device_info = device_info
 
     @property
     def native_value(self) -> datetime | None:
