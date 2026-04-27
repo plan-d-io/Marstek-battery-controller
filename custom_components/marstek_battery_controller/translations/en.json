@@ -1,0 +1,143 @@
+{
+  "title": "Marstek Battery Controller",
+  "issues": {
+    "marstek_unavailable": {
+      "title": "Marstek Modbus entities not found",
+      "description": "The configured Marstek device no longer exposes the required entities. Verify the marstek_modbus integration."
+    },
+    "sensor_unavailable": {
+      "title": "Critical sensor unavailable",
+      "description": "{name} has been unavailable for too long and the integration switched to Released mode."
+    },
+    "modbus_failures": {
+      "title": "Repeated Modbus write failures",
+      "description": "{count} consecutive writes failed via marstek_modbus service calls."
+    }
+  },
+  "config": {
+    "step": {
+      "user": {
+        "title": "Marstek device",
+        "description": "Select the device exposed by marstek_modbus, or choose manual setup.",
+        "data": {
+          "manual": "Manual entity setup (no marstek_modbus discovery)",
+          "marstek_device_id": "Marstek Modbus device"
+        }
+      },
+      "manual_devices": {
+        "title": "Manual entities",
+        "description": "Select each entity that matches the Marstek Venus E roles.",
+        "data": {
+          "battery_soc_entity": "Battery SoC sensor",
+          "ac_power_entity": "Battery AC power sensor",
+          "rs485_control_entity": "RS485 control switch",
+          "force_mode_entity": "Force mode select",
+          "set_charge_power_entity": "Set charge power number",
+          "set_discharge_power_entity": "Set discharge power number"
+        }
+      },
+      "grid": {
+        "title": "Grid power",
+        "description": "Required signed grid power (+ import from grid).",
+        "data": {
+          "grid_power_entity": "Grid power sensor"
+        }
+      },
+      "optional": {
+        "title": "Optional sensors",
+        "description": "Optional capacity tariff and rolling average sensors.",
+        "data": {
+          "cap_now_sensor": "15-minute rolling average grid power",
+          "monthly_peak_sensor": "Monthly grid peak sensor"
+        }
+      },
+      "parameters": {
+        "title": "Initial parameters",
+        "description": "Adjust defaults; everything can be changed later in the UI.",
+        "data": {
+          "mode": "Mode",
+          "min_soc": "Min SoC",
+          "max_soc": "Max SoC",
+          "max_battery_power": "Max battery power",
+          "send_interval": "Send interval",
+          "grid_smoothing": "Grid smoothing window",
+          "battery_smoothing": "Battery smoothing window",
+          "battery_capacity": "Battery capacity",
+          "evening_min_soc": "Evening min SoC",
+          "evening_max_charge_power": "Evening max charge power",
+          "capacity_tariff_enabled": "Capacity tariff enabled",
+          "max_desired_peak": "Max desired 15-min peak",
+          "manual_target_soc": "Manual target SoC",
+          "manual_power": "Manual power",
+          "evening_peak_time": "Evening peak start (HH:MM)",
+          "passive_floor_time": "Passive floor protection start (HH:MM)"
+        }
+      },
+      "init": {
+        "title": "Options",
+        "description": "Update integration parameters."
+      }
+    },
+    "error": {
+      "discovery_failed": "Roles could not be resolved on this device.",
+      "device_required": "Select a Marstek device or enable manual setup.",
+      "invalid_min_max_soc": "Min SoC must be less than max SoC.",
+      "evening_charge_too_high": "Evening max charge power cannot exceed max battery power.",
+      "manual_power_too_high": "Manual power cannot exceed max battery power."
+    },
+    "abort": {
+      "already_configured": "Already configured"
+    }
+  },
+  "entity": {
+    "select": {
+      "mode": {
+        "name": "Mode",
+        "state": {
+          "released": "Released",
+          "self_consumption": "Self-consumption",
+          "self_consumption_evening_peak": "Self-consumption + evening peak",
+          "self_consumption_passive_evening_peak": "Self-consumption + passive evening peak",
+          "manual": "Manual"
+        }
+      }
+    },
+    "number": {
+      "min_soc": { "name": "Min SoC (discharge floor)" },
+      "max_soc": { "name": "Max SoC (charge ceiling)" },
+      "max_battery_power": { "name": "Max battery power" },
+      "send_interval": { "name": "Send interval" },
+      "grid_smoothing_window": { "name": "Grid smoothing window" },
+      "battery_smoothing_window": { "name": "Battery smoothing window" },
+      "battery_capacity": { "name": "Battery capacity" },
+      "evening_min_soc": { "name": "Evening min SoC" },
+      "evening_max_charge_power": { "name": "Evening max charge power" },
+      "max_desired_peak": { "name": "Max desired 15-minute peak" },
+      "manual_target_soc": { "name": "Manual target SoC" },
+      "manual_power": { "name": "Manual power" }
+    },
+    "switch": {
+      "capacity_tariff_enabled": { "name": "Capacity tariff enabled" }
+    },
+    "datetime": {
+      "evening_peak_start": { "name": "Evening peak start" },
+      "passive_floor_protection_start": { "name": "Passive floor-protection start" }
+    },
+    "button": {
+      "manual_trigger": { "name": "Manual trigger" }
+    },
+    "sensor": {
+      "target_setpoint": { "name": "Target setpoint" },
+      "last_sent_setpoint": { "name": "Last sent setpoint" },
+      "operating_state": { "name": "Operating state" },
+      "reason_code": { "name": "Reason code" },
+      "latest_start_charge": { "name": "Latest start charge" },
+      "effective_cap_threshold": { "name": "Effective capacity threshold" },
+      "grid_power_smoothed": { "name": "Grid power smoothed" },
+      "battery_power_smoothed": { "name": "Battery power smoothed" },
+      "cap_now_internal": { "name": "Cap now (internal)" },
+      "minutes_to_evening_peak": { "name": "Minutes to evening peak" },
+      "energy_needed_for_evening": { "name": "Energy needed for evening" }
+    }
+  }
+}

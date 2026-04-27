@@ -1,0 +1,143 @@
+{
+  "title": "Marstek-batterijcontroller",
+  "issues": {
+    "marstek_unavailable": {
+      "title": "Marstek Modbus-entiteiten niet gevonden",
+      "description": "Het geconfigureerde Marstek-apparaat levert de vereiste entiteiten niet meer. Controleer de marstek_modbus-integratie."
+    },
+    "sensor_unavailable": {
+      "title": "Kritieke sensor niet beschikbaar",
+      "description": "{name} was te lang niet beschikbaar en de integratie schakelde naar de modus Vrijgegeven."
+    },
+    "modbus_failures": {
+      "title": "Herhaalde Modbus-schrijffouten",
+      "description": "{count} opeenvolgende schrijvingen via marstek_modbus-services zijn mislukt."
+    }
+  },
+  "config": {
+    "step": {
+      "user": {
+        "title": "Marstek-apparaat",
+        "description": "Selecteer het apparaat uit marstek_modbus of kies handmatige configuratie.",
+        "data": {
+          "manual": "Handmatige entiteiten (geen marstek_modbus-detectie)",
+          "marstek_device_id": "Marstek Modbus-apparaat"
+        }
+      },
+      "manual_devices": {
+        "title": "Handmatige entiteiten",
+        "description": "Selecteer elke entiteit die bij de rollen van de Marstek Venus E hoort.",
+        "data": {
+          "battery_soc_entity": "Battery SoC-sensor",
+          "ac_power_entity": "AC-vermogen batterijsensor",
+          "rs485_control_entity": "RS485-besturingsschakelaar",
+          "force_mode_entity": "Forceermodus selecteren",
+          "set_charge_power_entity": "Laadvermogen nummer",
+          "set_discharge_power_entity": "Ontlaadvermogen nummer"
+        }
+      },
+      "grid": {
+        "title": "Netvermogen",
+        "description": "Vereist gesigned netvermogen (+ import van het net).",
+        "data": {
+          "grid_power_entity": "Netvermogen sensor"
+        }
+      },
+      "optional": {
+        "title": "Optionele sensoren",
+        "description": "Optionele capaciteitstarief- en rol gemiddelde sensoren.",
+        "data": {
+          "cap_now_sensor": "Netvermogen 15 minuten voortschrijdend gemiddelde",
+          "monthly_peak_sensor": "Maandelijks netpiek-sensor"
+        }
+      },
+      "parameters": {
+        "title": "Initiële parameters",
+        "description": "Pas standaarden aan; alles kan later in de UI worden gewijzigd.",
+        "data": {
+          "mode": "Modus",
+          "min_soc": "Min SoC",
+          "max_soc": "Max SoC",
+          "max_battery_power": "Max batterijvermogen",
+          "send_interval": "Verzendinterval",
+          "grid_smoothing": "Gladstrijken netvenster",
+          "battery_smoothing": "Gladstrijken batterijvenster",
+          "battery_capacity": "Batterijcapaciteit",
+          "evening_min_soc": "Avond min SoC",
+          "evening_max_charge_power": "Avond max laadvermogen",
+          "capacity_tariff_enabled": "Capaciteitstarief ingeschakeld",
+          "max_desired_peak": "Gewenste max 15-min piek",
+          "manual_target_soc": "Manueel doel-SoC",
+          "manual_power": "Manueel vermogen",
+          "evening_peak_time": "Avondpiek start (UU:MM)",
+          "passive_floor_time": "Passieve vloerbescherming start (UU:MM)"
+        }
+      },
+      "init": {
+        "title": "Opties",
+        "description": "Integratieparameters bijwerken."
+      }
+    },
+    "error": {
+      "discovery_failed": "Rollen konden op dit apparaat niet worden gevonden.",
+      "device_required": "Selecteer een Marstek-apparaat of schakel handmatige setup in.",
+      "invalid_min_max_soc": "Min SoC moet kleiner zijn dan max SoC.",
+      "evening_charge_too_high": "Avond max laadvermogen mag niet hoger zijn dan max batterijvermogen.",
+      "manual_power_too_high": "Manueel vermogen mag niet hoger zijn dan max batterijvermogen."
+    },
+    "abort": {
+      "already_configured": "Reeds geconfigureerd"
+    }
+  },
+  "entity": {
+    "select": {
+      "mode": {
+        "name": "Modus",
+        "state": {
+          "released": "Vrijgegeven",
+          "self_consumption": "Zelfverbruik",
+          "self_consumption_evening_peak": "Zelfverbruik + avondpiek",
+          "self_consumption_passive_evening_peak": "Zelfverbruik + passieve avondpiek",
+          "manual": "Manueel"
+        }
+      }
+    },
+    "number": {
+      "min_soc": { "name": "Min SoC (ontlaadvloer)" },
+      "max_soc": { "name": "Max SoC (laadplafond)" },
+      "max_battery_power": { "name": "Max batterijvermogen" },
+      "send_interval": { "name": "Verzendinterval" },
+      "grid_smoothing_window": { "name": "Gladstrijken netvenster" },
+      "battery_smoothing_window": { "name": "Gladstrijken batterijvenster" },
+      "battery_capacity": { "name": "Batterijcapaciteit" },
+      "evening_min_soc": { "name": "Avond min SoC" },
+      "evening_max_charge_power": { "name": "Avond max laadvermogen" },
+      "max_desired_peak": { "name": "Gewenste max 15-min piek" },
+      "manual_target_soc": { "name": "Manueel doel-SoC" },
+      "manual_power": { "name": "Manueel vermogen" }
+    },
+    "switch": {
+      "capacity_tariff_enabled": { "name": "Capaciteitstarief ingeschakeld" }
+    },
+    "datetime": {
+      "evening_peak_start": { "name": "Avondpiek start" },
+      "passive_floor_protection_start": { "name": "Passieve vloerbescherming start" }
+    },
+    "button": {
+      "manual_trigger": { "name": "Manuele trigger" }
+    },
+    "sensor": {
+      "target_setpoint": { "name": "Doel instelpunt" },
+      "last_sent_setpoint": { "name": "Laatst verzonden instelpunt" },
+      "operating_state": { "name": "Bedrijfsstatus" },
+      "reason_code": { "name": "Redencode" },
+      "latest_start_charge": { "name": "Laatste start laden" },
+      "effective_cap_threshold": { "name": "Effectieve capaciteitsdrempel" },
+      "grid_power_smoothed": { "name": "Gladgestreken netvermogen" },
+      "battery_power_smoothed": { "name": "Gladgestreken batterijvermogen" },
+      "cap_now_internal": { "name": "Cap nu (intern)" },
+      "minutes_to_evening_peak": { "name": "Minuten tot avondpiek" },
+      "energy_needed_for_evening": { "name": "Energie nodig voor avond" }
+    }
+  }
+}

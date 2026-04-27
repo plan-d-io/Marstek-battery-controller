@@ -1,0 +1,14 @@
+{
+  "domain": "marstek_battery_controller",
+  "name": "Marstek Battery Controller",
+  "after_dependencies": [],
+  "codeowners": ["@TBD"],
+  "config_flow": true,
+  "dependencies": ["marstek_modbus"],
+  "documentation": "https://github.com/plan-d-io/Marstek-battery-controller",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/plan-d-io/Marstek-battery-controller/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

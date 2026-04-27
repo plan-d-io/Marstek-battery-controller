@@ -1,0 +1,143 @@
+{
+  "title": "Contrôleur de batterie Marstek",
+  "issues": {
+    "marstek_unavailable": {
+      "title": "Entités Marstek Modbus introuvables",
+      "description": "L’appareil Marstek configuré n’expose plus les entités requises. Vérifiez l’intégration marstek_modbus."
+    },
+    "sensor_unavailable": {
+      "title": "Capteur critique indisponible",
+      "description": "{name} est resté indisponible trop longtemps ; l’intégration est passée en mode Libéré."
+    },
+    "modbus_failures": {
+      "title": "Échecs d’écriture Modbus répétés",
+      "description": "{count} écritures consécutives ont échoué via les appels de service marstek_modbus."
+    }
+  },
+  "config": {
+    "step": {
+      "user": {
+        "title": "Appareil Marstek",
+        "description": "Sélectionnez l’appareil exposé par marstek_modbus ou choisissez une configuration manuelle.",
+        "data": {
+          "manual": "Configuration manuelle des entités (sans découverte marstek_modbus)",
+          "marstek_device_id": "Appareil Marstek Modbus"
+        }
+      },
+      "manual_devices": {
+        "title": "Entités manuelles",
+        "description": "Sélectionnez chaque entité correspondant aux rôles du Marstek Venus E.",
+        "data": {
+          "battery_soc_entity": "Capteur SoC batterie",
+          "ac_power_entity": "Capteur puissance AC batterie",
+          "rs485_control_entity": "Interrupteur contrôle RS485",
+          "force_mode_entity": "Liste mode forcé",
+          "set_charge_power_entity": "Nombre puissance charge",
+          "set_discharge_power_entity": "Nombre puissance décharge"
+        }
+      },
+      "grid": {
+        "title": "Puissance réseau",
+        "description": "Puissance réseau signée requise (+ import depuis le réseau).",
+        "data": {
+          "grid_power_entity": "Capteur puissance réseau"
+        }
+      },
+      "optional": {
+        "title": "Capteurs optionnels",
+        "description": "Capteurs optionnels pour tarif capacitaire et moyenne glissante.",
+        "data": {
+          "cap_now_sensor": "Puissance réseau moyenne sur 15 minutes",
+          "monthly_peak_sensor": "Capteur pic mensuel réseau"
+        }
+      },
+      "parameters": {
+        "title": "Paramètres initiaux",
+        "description": "Ajustez les valeurs par défaut ; tout peut être modifié ensuite dans l’interface.",
+        "data": {
+          "mode": "Mode",
+          "min_soc": "SoC min",
+          "max_soc": "SoC max",
+          "max_battery_power": "Puissance batterie max",
+          "send_interval": "Intervalle d’envoi",
+          "grid_smoothing": "Fenêtre de lissage réseau",
+          "battery_smoothing": "Fenêtre de lissage batterie",
+          "battery_capacity": "Capacité batterie",
+          "evening_min_soc": "SoC min du soir",
+          "evening_max_charge_power": "Puissance de charge max du soir",
+          "capacity_tariff_enabled": "Tarif capacitaire activé",
+          "max_desired_peak": "Pic 15 minutes max souhaité",
+          "manual_target_soc": "SoC cible manuel",
+          "manual_power": "Puissance manuelle",
+          "evening_peak_time": "Début pic du soir (HH:MM)",
+          "passive_floor_time": "Début protection passive du plancher (HH:MM)"
+        }
+      },
+      "init": {
+        "title": "Options",
+        "description": "Mettre à jour les paramètres de l’intégration."
+      }
+    },
+    "error": {
+      "discovery_failed": "Les rôles n’ont pas pu être résolus sur cet appareil.",
+      "device_required": "Sélectionnez un appareil Marstek ou activez la configuration manuelle.",
+      "invalid_min_max_soc": "Le SoC min doit être inférieur au SoC max.",
+      "evening_charge_too_high": "La puissance de charge du soir ne peut pas dépasser la puissance batterie max.",
+      "manual_power_too_high": "La puissance manuelle ne peut pas dépasser la puissance batterie max."
+    },
+    "abort": {
+      "already_configured": "Déjà configuré"
+    }
+  },
+  "entity": {
+    "select": {
+      "mode": {
+        "name": "Mode",
+        "state": {
+          "released": "Libéré",
+          "self_consumption": "Autoconsommation",
+          "self_consumption_evening_peak": "Autoconsommation + pic du soir",
+          "self_consumption_passive_evening_peak": "Autoconsommation + pic passif du soir",
+          "manual": "Manuel"
+        }
+      }
+    },
+    "number": {
+      "min_soc": { "name": "SoC min (plancher décharge)" },
+      "max_soc": { "name": "SoC max (plafond charge)" },
+      "max_battery_power": { "name": "Puissance batterie max" },
+      "send_interval": { "name": "Intervalle d’envoi" },
+      "grid_smoothing_window": { "name": "Fenêtre de lissage réseau" },
+      "battery_smoothing_window": { "name": "Fenêtre de lissage batterie" },
+      "battery_capacity": { "name": "Capacité batterie" },
+      "evening_min_soc": { "name": "SoC min du soir" },
+      "evening_max_charge_power": { "name": "Puissance de charge max du soir" },
+      "max_desired_peak": { "name": "Pic 15 minutes max souhaité" },
+      "manual_target_soc": { "name": "SoC cible manuel" },
+      "manual_power": { "name": "Puissance manuelle" }
+    },
+    "switch": {
+      "capacity_tariff_enabled": { "name": "Tarif capacitaire activé" }
+    },
+    "datetime": {
+      "evening_peak_start": { "name": "Début pic du soir" },
+      "passive_floor_protection_start": { "name": "Début protection passive du plancher" }
+    },
+    "button": {
+      "manual_trigger": { "name": "Déclencheur manuel" }
+    },
+    "sensor": {
+      "target_setpoint": { "name": "Consigne cible" },
+      "last_sent_setpoint": { "name": "Dernière consigne envoyée" },
+      "operating_state": { "name": "État de fonctionnement" },
+      "reason_code": { "name": "Code motif" },
+      "latest_start_charge": { "name": "Dernier début de charge" },
+      "effective_cap_threshold": { "name": "Seuil capacitaire effectif" },
+      "grid_power_smoothed": { "name": "Puissance réseau lissée" },
+      "battery_power_smoothed": { "name": "Puissance batterie lissée" },
+      "cap_now_internal": { "name": "Cap actuel (interne)" },
+      "minutes_to_evening_peak": { "name": "Minutes avant pic du soir" },
+      "energy_needed_for_evening": { "name": "Énergie requise pour le soir" }
+    }
+  }
+}
