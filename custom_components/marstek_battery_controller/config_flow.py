@@ -27,12 +27,11 @@ STEP_ID_PARAMS = "parameters"
 
 
 def _power_sensor_selector_strict() -> selector.EntitySelector:
-    """Grid power: device_class power, W (§5.2)."""
+    """Grid power: any power-class sensor (P1, HomeWizard, etc.). No UoM filter — HA rejects it."""
     return selector.EntitySelector(
         selector.EntitySelectorConfig(
             domain="sensor",
             device_class=SensorDeviceClass.POWER,
-            unit_of_measurement="W",
         )
     )
 
@@ -43,7 +42,7 @@ def _power_sensor_selector_loose() -> selector.EntitySelector:
 
 
 def _build_grid_power_schema(*, loose: bool) -> vol.Schema:
-    """Build grid step schema; ``loose`` skips power/uom filters."""
+    """Build grid step schema; ``loose`` is domain=sensor only (no device_class)."""
     sel = _power_sensor_selector_loose() if loose else _power_sensor_selector_strict()
     return vol.Schema({vol.Required(const.CONF_GRID_POWER): sel})
 
@@ -74,182 +73,218 @@ def _manual_toggle_is_on(raw: Any) -> bool:
 
 
 def _optional_powerish_selector() -> selector.EntitySelector:
-    """Optional sensor (often power)."""
-    return selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
+    """Optional peak / average power sensors (same device_class as grid)."""
+    return selector.EntitySelector(
+        selector.EntitySelectorConfig(
+            domain="sensor",
+            device_class=SensorDeviceClass.POWER,
+        )
+    )
 
 
 def _param_schema_defaults(
-    merged: dict[str, Any],
+    merged: dict[str, Any], *, initial: bool = False
 ) -> vol.Schema:
-    """§5.4 — voluptuous schema with explicit defaults."""
+    """Voluptuous schema with explicit defaults. Initial setup omits mode and manual fields."""
     d = merged
-    return vol.Schema(
-        {
-            vol.Optional("mode", default=d.get("mode", const.DEFAULT_MODE)): vol.In(
-                const.MODES
+    schema_dict: dict[Any, Any] = {}
+
+    if not initial:
+        schema_dict[
+            vol.Optional("mode", default=d.get("mode", const.DEFAULT_MODE))
+        ] = vol.In(const.MODES)
+
+    schema_dict[
+        vol.Optional("min_soc", default=d.get("min_soc", const.DEFAULT_MIN_SOC))
+    ] = selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=const.MIN_SOC_PCT,
+            max=const.MAX_SOC_PCT,
+            step=1,
+            mode=selector.NumberSelectorMode.SLIDER,
+            unit_of_measurement="%",
+        )
+    )
+    schema_dict[
+        vol.Optional("max_soc", default=d.get("max_soc", const.DEFAULT_MAX_SOC))
+    ] = selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=const.MIN_SOC_PCT,
+            max=const.MAX_SOC_PCT,
+            step=1,
+            mode=selector.NumberSelectorMode.SLIDER,
+            unit_of_measurement="%",
+        )
+    )
+    schema_dict[
+        vol.Optional(
+            "max_battery_power",
+            default=d.get("max_battery_power", const.DEFAULT_MAX_BATTERY_POWER),
+        )
+    ] = selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=const.MIN_BATTERY_POWER_W,
+            max=const.MAX_BATTERY_POWER_LIMIT_W,
+            step=50,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement=UnitOfPower.WATT,
+        )
+    )
+    schema_dict[
+        vol.Optional(
+            "battery_capacity",
+            default=d.get("battery_capacity", const.DEFAULT_BATTERY_CAPACITY_WH),
+        )
+    ] = selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=const.MIN_BATTERY_CAPACITY_WH,
+            max=const.MAX_BATTERY_CAPACITY_WH,
+            step=100,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement="Wh",
+        )
+    )
+    schema_dict[
+        vol.Optional(
+            "capacity_tariff_enabled",
+            default=d.get(
+                "capacity_tariff_enabled", const.DEFAULT_CAPACITY_TARIFF_ENABLED
             ),
-            vol.Optional(
-                "min_soc", default=d.get("min_soc", const.DEFAULT_MIN_SOC)
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_SOC_PCT,
-                    max=const.MAX_SOC_PCT,
-                    step=1,
-                    mode=selector.NumberSelectorMode.SLIDER,
-                    unit_of_measurement="%",
-                )
+        )
+    ] = selector.BooleanSelector()
+    schema_dict[
+        vol.Optional(
+            "send_interval",
+            default=d.get("send_interval", const.DEFAULT_SEND_INTERVAL),
+        )
+    ] = selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=const.MIN_SEND_INTERVAL_S,
+            max=const.MAX_SEND_INTERVAL_S,
+            step=1,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement="s",
+        )
+    )
+    schema_dict[
+        vol.Optional(
+            "grid_smoothing",
+            default=d.get("grid_smoothing", const.DEFAULT_GRID_SMOOTHING_WINDOW),
+        )
+    ] = selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=const.MIN_SMOOTHING_WINDOW_S,
+            max=const.MAX_SMOOTHING_WINDOW_S,
+            step=1,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement="s",
+        )
+    )
+    schema_dict[
+        vol.Optional(
+            "battery_smoothing",
+            default=d.get(
+                "battery_smoothing", const.DEFAULT_BATTERY_SMOOTHING_WINDOW
             ),
-            vol.Optional(
-                "max_soc", default=d.get("max_soc", const.DEFAULT_MAX_SOC)
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_SOC_PCT,
-                    max=const.MAX_SOC_PCT,
-                    step=1,
-                    mode=selector.NumberSelectorMode.SLIDER,
-                    unit_of_measurement="%",
-                )
+        )
+    ] = selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=const.MIN_SMOOTHING_WINDOW_S,
+            max=const.MAX_SMOOTHING_WINDOW_S,
+            step=1,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement="s",
+        )
+    )
+    schema_dict[
+        vol.Optional(
+            "evening_min_soc",
+            default=d.get("evening_min_soc", const.DEFAULT_EVENING_MIN_SOC),
+        )
+    ] = selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=const.MIN_SOC_PCT,
+            max=const.MAX_SOC_PCT,
+            step=1,
+            mode=selector.NumberSelectorMode.SLIDER,
+            unit_of_measurement="%",
+        )
+    )
+    schema_dict[
+        vol.Optional(
+            "evening_max_charge_power",
+            default=d.get(
+                "evening_max_charge_power", const.DEFAULT_EVENING_MAX_CHARGE_POWER
             ),
-            vol.Optional(
-                "max_battery_power",
-                default=d.get("max_battery_power", const.DEFAULT_MAX_BATTERY_POWER),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_BATTERY_POWER_W,
-                    max=const.MAX_BATTERY_POWER_LIMIT_W,
-                    step=50,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement=UnitOfPower.WATT,
-                )
-            ),
-            vol.Optional(
-                "send_interval",
-                default=d.get("send_interval", const.DEFAULT_SEND_INTERVAL),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_SEND_INTERVAL_S,
-                    max=const.MAX_SEND_INTERVAL_S,
-                    step=1,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="s",
-                )
-            ),
-            vol.Optional(
-                "grid_smoothing",
-                default=d.get("grid_smoothing", const.DEFAULT_GRID_SMOOTHING_WINDOW),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_SMOOTHING_WINDOW_S,
-                    max=const.MAX_SMOOTHING_WINDOW_S,
-                    step=1,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="s",
-                )
-            ),
-            vol.Optional(
-                "battery_smoothing",
-                default=d.get(
-                    "battery_smoothing", const.DEFAULT_BATTERY_SMOOTHING_WINDOW
-                ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_SMOOTHING_WINDOW_S,
-                    max=const.MAX_SMOOTHING_WINDOW_S,
-                    step=1,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="s",
-                )
-            ),
-            vol.Optional(
-                "battery_capacity",
-                default=d.get("battery_capacity", const.DEFAULT_BATTERY_CAPACITY_WH),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_BATTERY_CAPACITY_WH,
-                    max=const.MAX_BATTERY_CAPACITY_WH,
-                    step=100,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="Wh",
-                )
-            ),
-            vol.Optional(
-                "evening_min_soc",
-                default=d.get("evening_min_soc", const.DEFAULT_EVENING_MIN_SOC),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_SOC_PCT,
-                    max=const.MAX_SOC_PCT,
-                    step=1,
-                    mode=selector.NumberSelectorMode.SLIDER,
-                    unit_of_measurement="%",
-                )
-            ),
-            vol.Optional(
-                "evening_max_charge_power",
-                default=d.get(
-                    "evening_max_charge_power", const.DEFAULT_EVENING_MAX_CHARGE_POWER
-                ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_EVENING_CHARGE_POWER_W,
-                    max=const.MAX_BATTERY_POWER_LIMIT_W,
-                    step=50,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement=UnitOfPower.WATT,
-                )
-            ),
-            vol.Optional(
-                "capacity_tariff_enabled",
-                default=d.get(
-                    "capacity_tariff_enabled", const.DEFAULT_CAPACITY_TARIFF_ENABLED
-                ),
-            ): selector.BooleanSelector(),
-            vol.Optional(
-                "max_desired_peak",
-                default=d.get("max_desired_peak", const.DEFAULT_MAX_DESIRED_PEAK_W),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_MAX_DESIRED_PEAK_W,
-                    max=const.MAX_MAX_DESIRED_PEAK_W,
-                    step=50,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement=UnitOfPower.WATT,
-                )
-            ),
+        )
+    ] = selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=const.MIN_EVENING_CHARGE_POWER_W,
+            max=const.MAX_BATTERY_POWER_LIMIT_W,
+            step=50,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement=UnitOfPower.WATT,
+        )
+    )
+    schema_dict[
+        vol.Optional(
+            "max_desired_peak",
+            default=d.get("max_desired_peak", const.DEFAULT_MAX_DESIRED_PEAK_W),
+        )
+    ] = selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=const.MIN_MAX_DESIRED_PEAK_W,
+            max=const.MAX_MAX_DESIRED_PEAK_W,
+            step=50,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement=UnitOfPower.WATT,
+        )
+    )
+
+    if not initial:
+        schema_dict[
             vol.Optional(
                 "manual_target_soc",
                 default=d.get("manual_target_soc", const.DEFAULT_MANUAL_TARGET_SOC),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_SOC_PCT,
-                    max=const.MAX_SOC_PCT,
-                    step=1,
-                    mode=selector.NumberSelectorMode.SLIDER,
-                    unit_of_measurement="%",
-                )
-            ),
+            )
+        ] = selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=const.MIN_SOC_PCT,
+                max=const.MAX_SOC_PCT,
+                step=1,
+                mode=selector.NumberSelectorMode.SLIDER,
+                unit_of_measurement="%",
+            )
+        )
+        schema_dict[
             vol.Optional(
                 "manual_power",
                 default=d.get("manual_power", const.DEFAULT_MANUAL_POWER),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=const.MIN_BATTERY_POWER_W,
-                    max=const.MAX_BATTERY_POWER_LIMIT_W,
-                    step=50,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement=UnitOfPower.WATT,
-                )
-            ),
-            vol.Optional(
-                "evening_peak_time",
-                default=d.get("evening_peak_time", "18:00"),
-            ): selector.TextSelector(),
-            vol.Optional(
-                "passive_floor_time",
-                default=d.get("passive_floor_time", "13:00"),
-            ): selector.TextSelector(),
-        }
-    )
+            )
+        ] = selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=const.MIN_BATTERY_POWER_W,
+                max=const.MAX_BATTERY_POWER_LIMIT_W,
+                step=50,
+                mode=selector.NumberSelectorMode.BOX,
+                unit_of_measurement=UnitOfPower.WATT,
+            )
+        )
+
+    schema_dict[
+        vol.Optional(
+            "evening_peak_time",
+            default=d.get("evening_peak_time", "18:00"),
+        )
+    ] = selector.TextSelector()
+    schema_dict[
+        vol.Optional(
+            "passive_floor_time",
+            default=d.get("passive_floor_time", "13:00"),
+        )
+    ] = selector.TextSelector()
+
+    return vol.Schema(schema_dict)
 
 
 class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
@@ -479,12 +514,10 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
                 errors["base"] = "invalid_min_max_soc"
             elif merged["evening_max_charge_power"] > merged["max_battery_power"]:
                 errors["base"] = "evening_charge_too_high"
-            elif merged["manual_power"] > merged["max_battery_power"]:
-                errors["base"] = "manual_power_too_high"
             if errors:
                 return self.async_show_form(
                     step_id=STEP_ID_PARAMS,
-                    data_schema=_param_schema_defaults(merged),
+                    data_schema=_param_schema_defaults(merged, initial=True),
                     errors=errors,
                 )
 
@@ -508,7 +541,7 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
             await self.async_set_unique_id(uid)
             self._abort_if_unique_id_configured()
 
-            options = dict(user_input)
+            options = merged
             return self.async_create_entry(
                 title="Marstek Battery Controller",
                 data=data,
@@ -517,7 +550,7 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
 
         return self.async_show_form(
             step_id=STEP_ID_PARAMS,
-            data_schema=_param_schema_defaults(defaults),
+            data_schema=_param_schema_defaults(defaults, initial=True),
         )
 
     @staticmethod
@@ -563,25 +596,25 @@ class MarstekBatteryOptionsFlow(OptionsFlow):
             if merged["min_soc"] >= merged["max_soc"]:
                 return self.async_show_form(
                     step_id="init",
-                    data_schema=_param_schema_defaults(merged),
+                    data_schema=_param_schema_defaults(merged, initial=False),
                     errors={"base": "invalid_min_max_soc"},
                 )
             if merged["evening_max_charge_power"] > merged["max_battery_power"]:
                 return self.async_show_form(
                     step_id="init",
-                    data_schema=_param_schema_defaults(merged),
+                    data_schema=_param_schema_defaults(merged, initial=False),
                     errors={"base": "evening_charge_too_high"},
                 )
             if merged["manual_power"] > merged["max_battery_power"]:
                 return self.async_show_form(
                     step_id="init",
-                    data_schema=_param_schema_defaults(merged),
+                    data_schema=_param_schema_defaults(merged, initial=False),
                     errors={"base": "manual_power_too_high"},
                 )
             return self.async_create_entry(title="", data=merged)
 
         return self.async_show_form(
             step_id="init",
-            data_schema=_param_schema_defaults(merged_in),
+            data_schema=_param_schema_defaults(merged_in, initial=False),
         )
 

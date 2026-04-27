@@ -38,44 +38,59 @@
       },
       "grid": {
         "title": "Netzleistung",
-        "description": "Erforderliche vorzeichenbehaftete Netzleistung (+ Bezug vom Netz).",
+        "description": "Sensor für Netzbezug/-einspeisung wählen, wie vom intelligenten Stromzähler gemessen (jede Integration mit Leistungssensor). Positiv = Bezug; negativ = Einspeisung.",
         "data": {
           "grid_power_entity": "Netzleistungssensor"
         }
       },
       "optional": {
         "title": "Optionale Sensoren",
-        "description": "Optionale Kapazitätstarif- und Rollmittel-Sensoren.",
+        "description": "Optional für Kapazitätstarif: Spitzenlast im laufenden Viertelstunden- und Monatsfenster (Leistungssensoren, oft vom Zähler oder DSMR).",
         "data": {
-          "cap_now_sensor": "15-Minuten-Gleitmittel Netzleistung",
-          "monthly_peak_sensor": "Monatlicher Netzspitzen-Sensor"
+          "cap_now_sensor": "Sensor Spitzenlast laufende Viertelstunde",
+          "monthly_peak_sensor": "Sensor Spitzenlast laufender Monat"
         }
       },
       "parameters": {
         "title": "Anfangsparameter",
         "description": "Standards anpassen; alles kann später in der Oberfläche geändert werden.",
         "data": {
-          "mode": "Modus",
           "min_soc": "Min-SoC",
           "max_soc": "Max-SoC",
-          "max_battery_power": "Max. Batterieleistung",
-          "send_interval": "Sendeintervall",
-          "grid_smoothing": "Glättungsfenster Netz",
-          "battery_smoothing": "Glättungsfenster Batterie",
+          "max_battery_power": "Maximale Batterieleistung",
           "battery_capacity": "Batteriekapazität",
+          "capacity_tariff_enabled": "Kapazitätstarif aktiv",
+          "send_interval": "Intervall Batteriebefehle senden",
+          "grid_smoothing": "Mittelungsfenster Netzleistung",
+          "battery_smoothing": "Mittelungsfenster Batterieleistung",
           "evening_min_soc": "Abend Min-SoC",
           "evening_max_charge_power": "Abend max. Ladeleistung",
-          "capacity_tariff_enabled": "Kapazitätstarif aktiv",
           "max_desired_peak": "Gewünschte max. 15-Min-Spitze",
-          "manual_target_soc": "Manuelles Ziel-SoC",
-          "manual_power": "Manuelle Leistung",
           "evening_peak_time": "Abendspitzenbeginn (HH:MM)",
           "passive_floor_time": "Passiver Bodenschutz Beginn (HH:MM)"
         }
       },
       "init": {
         "title": "Optionen",
-        "description": "Integrationsparameter aktualisieren."
+        "description": "Integrationsparameter aktualisieren.",
+        "data": {
+          "mode": "Modus",
+          "min_soc": "Min-SoC",
+          "max_soc": "Max-SoC",
+          "max_battery_power": "Maximale Batterieleistung",
+          "battery_capacity": "Batteriekapazität",
+          "capacity_tariff_enabled": "Kapazitätstarif aktiv",
+          "send_interval": "Intervall Batteriebefehle senden",
+          "grid_smoothing": "Mittelungsfenster Netzleistung",
+          "battery_smoothing": "Mittelungsfenster Batterieleistung",
+          "evening_min_soc": "Abend Min-SoC",
+          "evening_max_charge_power": "Abend max. Ladeleistung",
+          "max_desired_peak": "Gewünschte max. 15-Min-Spitze",
+          "manual_target_soc": "Manuelles Ziel-SoC",
+          "manual_power": "Manuelle Leistung",
+          "evening_peak_time": "Abendspitzenbeginn (HH:MM)",
+          "passive_floor_time": "Passiver Bodenschutz Beginn (HH:MM)"
+        }
       }
     },
     "error": {
@@ -97,8 +112,8 @@
         "state": {
           "released": "Freigegeben",
           "self_consumption": "Eigenverbrauch",
-          "self_consumption_evening_peak": "Eigenverbrauch + Abendspitze",
-          "self_consumption_passive_evening_peak": "Eigenverbrauch + passive Abendspitze",
+          "self_consumption_evening_peak": "Eigenverbrauch mit Abendspitzenausgleich",
+          "self_consumption_passive_evening_peak": "Eigenverbrauch mit passivem Abendspitzenausgleich",
           "manual": "Manuell"
         }
       }
@@ -107,9 +122,9 @@
       "min_soc": { "name": "Min-SoC (Entladeboden)" },
       "max_soc": { "name": "Max-SoC (Ladedecke)" },
       "max_battery_power": { "name": "Max. Batterieleistung" },
-      "send_interval": { "name": "Sendeintervall" },
-      "grid_smoothing_window": { "name": "Glättungsfenster Netz" },
-      "battery_smoothing_window": { "name": "Glättungsfenster Batterie" },
+      "send_interval": { "name": "Intervall Batteriebefehle senden" },
+      "grid_smoothing_window": { "name": "Mittelungsfenster Netzleistung" },
+      "battery_smoothing_window": { "name": "Mittelungsfenster Batterieleistung" },
       "battery_capacity": { "name": "Batteriekapazität" },
       "evening_min_soc": { "name": "Abend Min-SoC" },
       "evening_max_charge_power": { "name": "Abend max. Ladeleistung" },

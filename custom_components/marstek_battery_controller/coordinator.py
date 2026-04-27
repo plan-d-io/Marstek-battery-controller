@@ -117,7 +117,8 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._modbus_failures = 0
         self._write_grace_until: datetime | None = None
 
-        self._listeners: list[CALLBACK_TYPE] = []
+        # Must not shadow DataUpdateCoordinator._listeners (dict of entity update callbacks).
+        self._state_change_unsubs: list[CALLBACK_TYPE] = []
         self._tick_unsub: CALLBACK_TYPE | None = None
 
         self._evening_peak_time = datetime.strptime("18:00", "%H:%M").time()
@@ -377,9 +378,9 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_shutdown(self) -> None:
         """Detach listeners."""
         self._cancel_tick()
-        for unsub in self._listeners:
+        for unsub in self._state_change_unsubs:
             unsub()
-        self._listeners.clear()
+        self._state_change_unsubs.clear()
         await super().async_shutdown()
 
     def async_setup_listeners(self) -> None:
@@ -399,7 +400,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._async_recalc()
             self.hass.async_create_task(self._async_check_manual_auto_exit())
 
-        self._listeners.append(
+        self._state_change_unsubs.append(
             async_track_state_change_event(self.hass, entities, _on_state)
         )
 

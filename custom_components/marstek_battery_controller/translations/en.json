@@ -38,44 +38,59 @@
       },
       "grid": {
         "title": "Grid power",
-        "description": "Required signed grid power (+ import from grid).",
+        "description": "Select the sensor measuring net grid offtake/injection from your digital meter (any integration that exposes a power-class sensor). Positive values must mean offtake from the grid; negative values mean injection.",
         "data": {
           "grid_power_entity": "Grid power sensor"
         }
       },
       "optional": {
         "title": "Optional sensors",
-        "description": "Optional capacity tariff and rolling average sensors.",
+        "description": "Optional helpers for capacity tariffs: peak demand for the current quarter-hour and for the current month (power sensors, often from your meter or DSMR integration).",
         "data": {
-          "cap_now_sensor": "15-minute rolling average grid power",
-          "monthly_peak_sensor": "Monthly grid peak sensor"
+          "cap_now_sensor": "Peak demand of the current quarter-hour sensor",
+          "monthly_peak_sensor": "Peak demand of the current month sensor"
         }
       },
       "parameters": {
         "title": "Initial parameters",
         "description": "Adjust defaults; everything can be changed later in the UI.",
         "data": {
-          "mode": "Mode",
           "min_soc": "Min SoC",
           "max_soc": "Max SoC",
-          "max_battery_power": "Max battery power",
-          "send_interval": "Send interval",
-          "grid_smoothing": "Grid smoothing window",
-          "battery_smoothing": "Battery smoothing window",
+          "max_battery_power": "Maximum battery power",
           "battery_capacity": "Battery capacity",
+          "capacity_tariff_enabled": "Capacity tariff enabled",
+          "send_interval": "Send battery command interval",
+          "grid_smoothing": "Grid power averaging window",
+          "battery_smoothing": "Battery power averaging window",
           "evening_min_soc": "Evening min SoC",
           "evening_max_charge_power": "Evening max charge power",
-          "capacity_tariff_enabled": "Capacity tariff enabled",
           "max_desired_peak": "Max desired 15-min peak",
-          "manual_target_soc": "Manual target SoC",
-          "manual_power": "Manual power",
           "evening_peak_time": "Evening peak start (HH:MM)",
           "passive_floor_time": "Passive floor protection start (HH:MM)"
         }
       },
       "init": {
         "title": "Options",
-        "description": "Update integration parameters."
+        "description": "Update integration parameters.",
+        "data": {
+          "mode": "Mode",
+          "min_soc": "Min SoC",
+          "max_soc": "Max SoC",
+          "max_battery_power": "Maximum battery power",
+          "battery_capacity": "Battery capacity",
+          "capacity_tariff_enabled": "Capacity tariff enabled",
+          "send_interval": "Send battery command interval",
+          "grid_smoothing": "Grid power averaging window",
+          "battery_smoothing": "Battery power averaging window",
+          "evening_min_soc": "Evening min SoC",
+          "evening_max_charge_power": "Evening max charge power",
+          "max_desired_peak": "Max desired 15-min peak",
+          "manual_target_soc": "Manual target SoC",
+          "manual_power": "Manual power",
+          "evening_peak_time": "Evening peak start (HH:MM)",
+          "passive_floor_time": "Passive floor protection start (HH:MM)"
+        }
       }
     },
     "error": {
@@ -97,8 +112,8 @@
         "state": {
           "released": "Released",
           "self_consumption": "Self-consumption",
-          "self_consumption_evening_peak": "Self-consumption + evening peak",
-          "self_consumption_passive_evening_peak": "Self-consumption + passive evening peak",
+          "self_consumption_evening_peak": "Self-consumption with evening peak compensation",
+          "self_consumption_passive_evening_peak": "Self-consumption with passive evening peak compensation",
           "manual": "Manual"
         }
       }
@@ -107,9 +122,9 @@
       "min_soc": { "name": "Min SoC (discharge floor)" },
       "max_soc": { "name": "Max SoC (charge ceiling)" },
       "max_battery_power": { "name": "Max battery power" },
-      "send_interval": { "name": "Send interval" },
-      "grid_smoothing_window": { "name": "Grid smoothing window" },
-      "battery_smoothing_window": { "name": "Battery smoothing window" },
+      "send_interval": { "name": "Send battery command interval" },
+      "grid_smoothing_window": { "name": "Grid power averaging window" },
+      "battery_smoothing_window": { "name": "Battery power averaging window" },
       "battery_capacity": { "name": "Battery capacity" },
       "evening_min_soc": { "name": "Evening min SoC" },
       "evening_max_charge_power": { "name": "Evening max charge power" },

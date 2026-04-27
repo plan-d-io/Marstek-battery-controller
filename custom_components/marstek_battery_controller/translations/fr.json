@@ -38,44 +38,59 @@
       },
       "grid": {
         "title": "Puissance réseau",
-        "description": "Puissance réseau signée requise (+ import depuis le réseau).",
+        "description": "Choisissez le capteur de prélèvement/injection réseau mesuré par le compteur intelligent (toute intégration exposant un capteur de classe puissance). Valeur positive = prélèvement ; valeur négative = injection.",
         "data": {
           "grid_power_entity": "Capteur puissance réseau"
         }
       },
       "optional": {
         "title": "Capteurs optionnels",
-        "description": "Capteurs optionnels pour tarif capacitaire et moyenne glissante.",
+        "description": "Optionnel pour le tarif capacitaire : puissance de pointe du quart d’heure en cours et du mois en cours (capteurs de puissance, souvent issus du compteur ou DSMR).",
         "data": {
-          "cap_now_sensor": "Puissance réseau moyenne sur 15 minutes",
-          "monthly_peak_sensor": "Capteur pic mensuel réseau"
+          "cap_now_sensor": "Capteur de puissance de pointe du quart d’heure en cours",
+          "monthly_peak_sensor": "Capteur de puissance de pointe du mois en cours"
         }
       },
       "parameters": {
         "title": "Paramètres initiaux",
         "description": "Ajustez les valeurs par défaut ; tout peut être modifié ensuite dans l’interface.",
         "data": {
-          "mode": "Mode",
           "min_soc": "SoC min",
           "max_soc": "SoC max",
-          "max_battery_power": "Puissance batterie max",
-          "send_interval": "Intervalle d’envoi",
-          "grid_smoothing": "Fenêtre de lissage réseau",
-          "battery_smoothing": "Fenêtre de lissage batterie",
+          "max_battery_power": "Puissance batterie maximale",
           "battery_capacity": "Capacité batterie",
+          "capacity_tariff_enabled": "Tarif capacitaire activé",
+          "send_interval": "Intervalle d’envoi des commandes batterie",
+          "grid_smoothing": "Fenêtre de moyenne de la puissance réseau",
+          "battery_smoothing": "Fenêtre de moyenne de la puissance batterie",
           "evening_min_soc": "SoC min du soir",
           "evening_max_charge_power": "Puissance de charge max du soir",
-          "capacity_tariff_enabled": "Tarif capacitaire activé",
           "max_desired_peak": "Pic 15 minutes max souhaité",
-          "manual_target_soc": "SoC cible manuel",
-          "manual_power": "Puissance manuelle",
           "evening_peak_time": "Début pic du soir (HH:MM)",
           "passive_floor_time": "Début protection passive du plancher (HH:MM)"
         }
       },
       "init": {
         "title": "Options",
-        "description": "Mettre à jour les paramètres de l’intégration."
+        "description": "Mettre à jour les paramètres de l’intégration.",
+        "data": {
+          "mode": "Mode",
+          "min_soc": "SoC min",
+          "max_soc": "SoC max",
+          "max_battery_power": "Puissance batterie maximale",
+          "battery_capacity": "Capacité batterie",
+          "capacity_tariff_enabled": "Tarif capacitaire activé",
+          "send_interval": "Intervalle d’envoi des commandes batterie",
+          "grid_smoothing": "Fenêtre de moyenne de la puissance réseau",
+          "battery_smoothing": "Fenêtre de moyenne de la puissance batterie",
+          "evening_min_soc": "SoC min du soir",
+          "evening_max_charge_power": "Puissance de charge max du soir",
+          "max_desired_peak": "Pic 15 minutes max souhaité",
+          "manual_target_soc": "SoC cible manuel",
+          "manual_power": "Puissance manuelle",
+          "evening_peak_time": "Début pic du soir (HH:MM)",
+          "passive_floor_time": "Début protection passive du plancher (HH:MM)"
+        }
       }
     },
     "error": {
@@ -97,8 +112,8 @@
         "state": {
           "released": "Libéré",
           "self_consumption": "Autoconsommation",
-          "self_consumption_evening_peak": "Autoconsommation + pic du soir",
-          "self_consumption_passive_evening_peak": "Autoconsommation + pic passif du soir",
+          "self_consumption_evening_peak": "Autoconsommation avec compensation du pic du soir",
+          "self_consumption_passive_evening_peak": "Autoconsommation avec compensation passive du pic du soir",
           "manual": "Manuel"
         }
       }
@@ -107,9 +122,9 @@
       "min_soc": { "name": "SoC min (plancher décharge)" },
       "max_soc": { "name": "SoC max (plafond charge)" },
       "max_battery_power": { "name": "Puissance batterie max" },
-      "send_interval": { "name": "Intervalle d’envoi" },
-      "grid_smoothing_window": { "name": "Fenêtre de lissage réseau" },
-      "battery_smoothing_window": { "name": "Fenêtre de lissage batterie" },
+      "send_interval": { "name": "Intervalle d’envoi des commandes batterie" },
+      "grid_smoothing_window": { "name": "Fenêtre de moyenne de la puissance réseau" },
+      "battery_smoothing_window": { "name": "Fenêtre de moyenne de la puissance batterie" },
       "battery_capacity": { "name": "Capacité batterie" },
       "evening_min_soc": { "name": "SoC min du soir" },
       "evening_max_charge_power": { "name": "Puissance de charge max du soir" },
