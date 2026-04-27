@@ -79,6 +79,7 @@
       }
     },
     "error": {
+      "internal_error": "Erreur inattendue à cette étape. Consultez home-assistant.log (recherchez marstek_battery_controller).",
       "discovery_failed": "Les rôles n’ont pas pu être résolus sur cet appareil.",
       "device_required": "Sélectionnez un appareil Marstek ou activez la configuration manuelle.",
       "invalid_min_max_soc": "Le SoC min doit être inférieur au SoC max.",

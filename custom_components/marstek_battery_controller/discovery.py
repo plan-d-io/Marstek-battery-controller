@@ -92,6 +92,12 @@ def resolve_roles_for_device(hass: HomeAssistant, device_id: str) -> ResolvedEnt
         )
         return None
 
+    _LOGGER.info(
+        "Marstek role map OK for device_id=%s entities=%s",
+        device_id,
+        {k: roles[k] for k in sorted(roles)},
+    )
+
     return ResolvedEntities(
         battery_soc=roles[const.ROLE_BATTERY_SOC],
         ac_power=roles[const.ROLE_AC_POWER],

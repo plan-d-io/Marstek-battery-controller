@@ -79,6 +79,7 @@
       }
     },
     "error": {
+      "internal_error": "Unexpected error in this step. Details are in home-assistant.log (search for marstek_battery_controller).",
       "discovery_failed": "Roles could not be resolved on this device.",
       "device_required": "Select a Marstek device or enable manual setup.",
       "invalid_min_max_soc": "Min SoC must be less than max SoC.",

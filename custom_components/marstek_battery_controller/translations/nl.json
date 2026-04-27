@@ -79,6 +79,7 @@
       }
     },
     "error": {
+      "internal_error": "Onverwachte fout in deze stap. Zie home-assistant.log (zoek op marstek_battery_controller).",
       "discovery_failed": "Rollen konden op dit apparaat niet worden gevonden.",
       "device_required": "Selecteer een Marstek-apparaat of schakel handmatige setup in.",
       "invalid_min_max_soc": "Min SoC moet kleiner zijn dan max SoC.",

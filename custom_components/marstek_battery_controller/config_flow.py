@@ -26,8 +26,8 @@ STEP_ID_OPTIONAL = "optional"
 STEP_ID_PARAMS = "parameters"
 
 
-def _power_sensor_selector() -> selector.EntitySelector:
-    """Grid power: device_class power, W."""
+def _power_sensor_selector_strict() -> selector.EntitySelector:
+    """Grid power: device_class power, W (§5.2)."""
     return selector.EntitySelector(
         selector.EntitySelectorConfig(
             domain="sensor",
@@ -35,6 +35,31 @@ def _power_sensor_selector() -> selector.EntitySelector:
             unit_of_measurement="W",
         )
     )
+
+
+def _power_sensor_selector_loose() -> selector.EntitySelector:
+    """Fallback if strict filters fail validation or frontend serialization."""
+    return selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
+
+
+def _build_grid_power_schema(*, loose: bool) -> vol.Schema:
+    """Build grid step schema; ``loose`` skips power/uom filters."""
+    sel = _power_sensor_selector_loose() if loose else _power_sensor_selector_strict()
+    return vol.Schema({vol.Required(const.CONF_GRID_POWER): sel})
+
+
+def _repr_user_input(data: dict[str, Any] | None) -> str:
+    """Safe single-line summary for logs (avoid secrets beyond entity ids)."""
+    if data is None:
+        return "None"
+    parts: list[str] = []
+    for key in sorted(data.keys()):
+        val = data[key]
+        if isinstance(val, dict):
+            parts.append(f"{key}={{...{len(val)} keys}}")
+        else:
+            parts.append(f"{key}={val!r}")
+    return ", ".join(parts)
 
 
 def _manual_toggle_is_on(raw: Any) -> bool:
@@ -246,13 +271,22 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
     ) -> FlowResult:
         """§5.1 — device or manual."""
         devices = list_marstek_devices(self.hass)
+        _LOGGER.info(
+            "%s async_step_user: device_ids=%s submit=%s",
+            const.DOMAIN,
+            [pair[0] for pair in devices],
+            _repr_user_input(user_input),
+        )
+
         if user_input is not None:
             if _manual_toggle_is_on(user_input.get("manual")):
                 self._use_manual = True
                 self._picked_device_id = None
+                _LOGGER.info("%s manual setup branch → manual_devices step", const.DOMAIN)
                 return await self.async_step_manual_devices()
             device_id = user_input.get(const.CONF_MARSTEK_DEVICE_ID)
             if not device_id:
+                _LOGGER.warning("%s submit without device_id", const.DOMAIN)
                 return self.async_show_form(
                     step_id="user",
                     data_schema=self._schema_user_pick(devices),
@@ -271,6 +305,11 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
                     errors={"base": "discovery_failed"},
                 )
             if resolved is None:
+                _LOGGER.warning(
+                    "%s role discovery returned None for device_id=%s",
+                    const.DOMAIN,
+                    device_id,
+                )
                 return self.async_show_form(
                     step_id="user",
                     data_schema=self._schema_user_pick(devices),
@@ -278,7 +317,24 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
                 )
             self._picked_device_id = str(device_id)
             self._use_manual = False
-            return await self.async_step_grid()
+            _LOGGER.info(
+                "%s discovery OK device_id=%s → grid step",
+                const.DOMAIN,
+                self._picked_device_id,
+            )
+            try:
+                return await self.async_step_grid()
+            except Exception:
+                _LOGGER.exception(
+                    "%s async_step_grid crashed after device pick device_id=%s",
+                    const.DOMAIN,
+                    device_id,
+                )
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=self._schema_user_pick(devices),
+                    errors={"base": "internal_error"},
+                )
 
         if not devices:
             self._use_manual = True
@@ -342,16 +398,39 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """§5.2 — grid sensor."""
-        schema = vol.Schema(
-            {
-                vol.Required(const.CONF_GRID_POWER): _power_sensor_selector(),
-            }
+        _LOGGER.info(
+            "%s async_step_grid enter user_input=%s",
+            const.DOMAIN,
+            _repr_user_input(user_input),
         )
+
         if user_input is not None:
-            self._grid_entity = user_input[const.CONF_GRID_POWER]
+            try:
+                self._grid_entity = user_input[const.CONF_GRID_POWER]
+            except KeyError:
+                _LOGGER.exception(
+                    "%s grid step missing key %s in %s",
+                    const.DOMAIN,
+                    const.CONF_GRID_POWER,
+                    list(user_input.keys()),
+                )
+                raise
+            _LOGGER.info("%s grid entity picked: %s", const.DOMAIN, self._grid_entity)
             return await self.async_step_optional()
 
-        return self.async_show_form(step_id=STEP_ID_GRID, data_schema=schema)
+        try:
+            schema = _build_grid_power_schema(loose=False)
+            _LOGGER.debug("%s built strict grid power schema OK", const.DOMAIN)
+        except Exception:
+            _LOGGER.exception("%s strict grid schema build failed — trying loose picker", const.DOMAIN)
+            schema = _build_grid_power_schema(loose=True)
+
+        try:
+            return self.async_show_form(step_id=STEP_ID_GRID, data_schema=schema)
+        except Exception:
+            _LOGGER.exception("%s async_show_form(grid) failed with strict schema — retry loose", const.DOMAIN)
+            schema = _build_grid_power_schema(loose=True)
+            return self.async_show_form(step_id=STEP_ID_GRID, data_schema=schema)
 
     async def async_step_optional(
         self, user_input: dict[str, Any] | None = None
