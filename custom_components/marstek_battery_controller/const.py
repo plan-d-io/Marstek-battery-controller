@@ -46,10 +46,10 @@ MODES: Final[tuple[str, ...]] = (
     MODE_MANUAL,
 )
 
-# Force mode values for marstek_modbus select entity.
+# Force mode values for marstek_modbus select entity (neutral option is ``stop`` or
+# ``standby`` depending on integration — resolved at runtime in modbus_writer).
 FORCE_CHARGE: Final = "charge"
 FORCE_DISCHARGE: Final = "discharge"
-FORCE_STANDBY: Final = "standby"
 
 # Diagnostic — operating_state (sensor text).
 STATE_RELEASED: Final = "released"

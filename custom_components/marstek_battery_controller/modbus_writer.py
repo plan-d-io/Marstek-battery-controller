@@ -29,6 +29,23 @@ class MarstekModbusWriter:
         self._e = entities
         self._rs485_on: bool = False
 
+    def _neutral_force_option(self) -> str:
+        """Neutral/stop option for the force-mode select (differs by firmware/integration).
+
+        Venus / current ``marstek_modbus`` exposes ``stop``, ``charge``, ``discharge``.
+        Older descriptions used ``standby`` instead of ``stop``.
+        """
+        st = self._hass.states.get(self._e.force_mode)
+        options: list[str] = []
+        if st and st.attributes:
+            raw = st.attributes.get("options")
+            if isinstance(raw, list):
+                options = [str(x) for x in raw]
+        for candidate in ("stop", "standby"):
+            if candidate in options:
+                return candidate
+        return "stop"
+
     @property
     def rs485_on(self) -> bool:
         """Whether the writer last turned RS485 control on."""
@@ -72,7 +89,7 @@ class MarstekModbusWriter:
     async def async_send_setpoint(self, setpoint_w: int) -> None:
         """§12.2 — translate signed setpoint to four underlying writes."""
         if setpoint_w == 0:
-            force_mode = const.FORCE_STANDBY
+            force_mode = self._neutral_force_option()
             charge_w = 0.0
             discharge_w = 0.0
         elif setpoint_w > 0:
@@ -111,7 +128,7 @@ class MarstekModbusWriter:
         await self._sleep_write_delay()
         self._rs485_on = True
 
-        await self.async_select_option(self._e.force_mode, const.FORCE_STANDBY)
+        await self.async_select_option(self._e.force_mode, self._neutral_force_option())
         await self._sleep_write_delay()
 
         await self.async_number_set_value(self._e.set_discharge_power, 0.0)
