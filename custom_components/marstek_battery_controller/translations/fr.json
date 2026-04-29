@@ -36,6 +36,34 @@
           "set_discharge_power_entity": "Nombre puissance décharge"
         }
       },
+      "scan_interval_consent": {
+        "title": "Accélérer l'interrogation batterie",
+        "description": "L'intégration Marstek Modbus interroge actuellement la batterie toutes les {current} secondes. Pour de meilleures performances d'autoconsommation, nous recommandons {recommended} seconde. Le changement est appliqué immédiatement et peut être annulé plus tard dans les options de l'intégration Marstek Modbus.",
+        "data": {
+          "apply": "Appliquer l'interrogation à 1 seconde maintenant"
+        }
+      },
+      "grid_source": {
+        "title": "Source de puissance réseau",
+        "description": "Choisissez comment l'intégration mesure la puissance réseau. Des mises à jour plus rapides donnent une régulation plus fluide.",
+        "data": {
+          "grid_source_type": "Source"
+        }
+      },
+      "homewizard_pick": {
+        "title": "Choisir un appareil HomeWizard P1",
+        "description": "Plusieurs appareils HomeWizard P1 ont été détectés. Choisissez celui connecté à votre compteur principal.",
+        "data": {
+          "homewizard_ip": "Appareil"
+        }
+      },
+      "homewizard_manual": {
+        "title": "Adresse IP HomeWizard P1",
+        "description": "Entrez l'adresse IP locale de votre dongle HomeWizard P1. L'intégration vérifiera qu'il est accessible et qu'il s'agit d'un compteur P1 (et non d'une prise connectée ou d'un autre appareil).",
+        "data": {
+          "homewizard_ip": "Adresse IP"
+        }
+      },
       "grid": {
         "title": "Puissance réseau",
         "description": "Choisissez le capteur de prélèvement/injection réseau mesuré par le compteur intelligent (toute intégration exposant un capteur de classe puissance). Valeur positive = prélèvement ; valeur négative = injection.",
@@ -97,6 +125,8 @@
       "internal_error": "Erreur inattendue à cette étape. Consultez home-assistant.log (recherchez marstek_battery_controller).",
       "discovery_failed": "Les rôles n’ont pas pu être résolus sur cet appareil.",
       "device_required": "Sélectionnez un appareil Marstek ou activez la configuration manuelle.",
+      "homewizard_unreachable": "Impossible de joindre le HomeWizard à cette adresse IP. Vérifiez l'adresse et que l'API locale est activée.",
+      "homewizard_wrong_product": "Cet appareil n'est pas un compteur HomeWizard P1. Les prises connectées et autres appareils HomeWizard ne peuvent pas être utilisés comme source de puissance réseau.",
       "invalid_min_max_soc": "Le SoC min doit être inférieur au SoC max.",
       "evening_charge_too_high": "La puissance de charge du soir ne peut pas dépasser la puissance batterie max.",
       "manual_power_too_high": "La puissance manuelle ne peut pas dépasser la puissance batterie max."
@@ -151,6 +181,7 @@
       "effective_cap_threshold": { "name": "Seuil capacitaire effectif" },
       "grid_power_smoothed": { "name": "Puissance réseau lissée" },
       "battery_power_smoothed": { "name": "Puissance batterie lissée" },
+      "grid_power_fast": { "name": "Puissance réseau rapide (HomeWizard)" },
       "cap_now_internal": { "name": "Cap actuel (interne)" },
       "minutes_to_evening_peak": { "name": "Minutes avant pic du soir" },
       "energy_needed_for_evening": { "name": "Énergie requise pour le soir" }

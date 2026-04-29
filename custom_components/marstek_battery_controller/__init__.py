@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 from datetime import time
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from . import const
@@ -74,6 +76,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     from .coordinator import CoordinatorRuntimeConfig, MarstekBatteryCoordinator
     from .discovery import resolve_roles_for_device, resolved_from_manual
+    from .homewizard_poller import HomeWizardPoller
     from .storage import MarstekStorage
 
     if entry.data.get(const.CONF_USE_DISCOVERY, False):
@@ -104,9 +107,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store_data = await storage.async_load()
     prev_mode: str | None = store_data.get("previous_mode")
 
+    grid_source_type = entry.data.get(
+        const.CONF_GRID_SOURCE_TYPE,
+        const.GRID_SOURCE_EXISTING_SENSOR,
+    )
+    grid_entity_id: str | None = (
+        entry.data.get(const.CONF_GRID_POWER)
+        if grid_source_type == const.GRID_SOURCE_EXISTING_SENSOR
+        else None
+    )
+
     runtime = CoordinatorRuntimeConfig(
         resolved=resolved,
-        grid_entity_id=entry.data[const.CONF_GRID_POWER],
+        grid_entity_id=grid_entity_id,
         cap_now_entity_id=entry.data.get(const.CONF_CAP_NOW_SENSOR),
         monthly_peak_entity_id=entry.data.get(const.CONF_MONTHLY_PEAK_SENSOR),
         use_internal_cap_now=not bool(entry.data.get(const.CONF_CAP_NOW_SENSOR)),
@@ -121,6 +134,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     _apply_options(coordinator, entry.options)
+
+    poller: HomeWizardPoller | None = None
+    if grid_source_type == const.GRID_SOURCE_HOMEWIZARD_FAST_POLL:
+        ip = entry.data.get(const.CONF_HOMEWIZARD_IP)
+        if not ip:
+            raise ConfigEntryNotReady("HomeWizard IP missing from entry data")
+        poller_interval = float(
+            entry.options.get(
+                const.CONF_HOMEWIZARD_POLL_INTERVAL,
+                const.DEFAULT_HOMEWIZARD_POLL_INTERVAL_S,
+            )
+        )
+        poller = HomeWizardPoller(
+            hass,
+            str(ip),
+            interval_s=poller_interval,
+            on_sample=coordinator._on_grid_sample,
+        )
+        await poller.start()
+        deadline = monotonic() + const.HOMEWIZARD_READY_TIMEOUT_S
+        while not poller.is_fresh() and monotonic() < deadline:
+            await asyncio.sleep(0.1)
+        if not poller.is_fresh():
+            await poller.stop()
+            raise ConfigEntryNotReady(
+                f"HomeWizard at {ip} did not return a sample within "
+                f"{const.HOMEWIZARD_READY_TIMEOUT_S}s"
+            )
+        coordinator.runtime.grid_power_poller = poller
 
     hass.data.setdefault(const.DOMAIN, {})
     hass.data[const.DOMAIN][entry.entry_id] = coordinator
@@ -148,4 +190,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload config entry."""
     coordinator = hass.data[const.DOMAIN].pop(entry.entry_id)
     await coordinator.async_shutdown()
+    if coordinator.runtime.grid_power_poller is not None:
+        await coordinator.runtime.grid_power_poller.stop()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

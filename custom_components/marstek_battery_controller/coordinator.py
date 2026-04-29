@@ -27,6 +27,7 @@ from .calculator import (
 )
 from .discovery import ResolvedEntities
 from .modbus_writer import MarstekModbusWriter
+from .homewizard_poller import HomeWizardPoller
 from .smoothing import SlidingWindowMean
 from .storage import MarstekStorage
 
@@ -65,10 +66,11 @@ class CoordinatorRuntimeConfig:
     """Resolved wiring from config entry."""
 
     resolved: ResolvedEntities
-    grid_entity_id: str
+    grid_entity_id: str | None
     cap_now_entity_id: str | None
     monthly_peak_entity_id: str | None
     use_internal_cap_now: bool
+    grid_power_poller: HomeWizardPoller | None = None
 
 
 class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -385,11 +387,15 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def async_setup_listeners(self) -> None:
         """Subscribe to relevant entity state changes."""
-        entities = [
-            self.runtime.grid_entity_id,
-            self.runtime.resolved.battery_soc,
-            self.runtime.resolved.ac_power,
-        ]
+        entities: list[str] = []
+        if self.runtime.grid_entity_id and self.runtime.grid_power_poller is None:
+            entities.append(self.runtime.grid_entity_id)
+        entities.extend(
+            [
+                self.runtime.resolved.battery_soc,
+                self.runtime.resolved.ac_power,
+            ]
+        )
         if self.runtime.cap_now_entity_id:
             entities.append(self.runtime.cap_now_entity_id)
         if self.runtime.monthly_peak_entity_id:
@@ -471,20 +477,34 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Run calculator on next loop iteration."""
         self.hass.async_create_task(self._async_run_calculator())
 
+    def _on_grid_sample(self, value_w: float, monotonic_ts: float) -> None:
+        """Called by HomeWizard poller after each successful read."""
+        self._async_recalc()
+
     async def _async_run_calculator(self) -> None:
         """Compute target setpoint from current HA state."""
         now = dt_util.now()
         hass = self.hass
 
-        grid_ent = self.runtime.grid_entity_id
         soc_ent = self.runtime.resolved.battery_soc
         batt_ent = self.runtime.resolved.ac_power
 
-        grid_st = hass.states.get(grid_ent)
+        poller = self.runtime.grid_power_poller
+        grid_st: State | None
+        grid_v: float | None
+        if poller is not None:
+            grid_v = poller.latest_w
+            grid_ok = poller.is_fresh()
+            grid_st = None
+        else:
+            grid_ent = self.runtime.grid_entity_id
+            grid_st = hass.states.get(grid_ent) if grid_ent else None
+            grid_ok = grid_st and grid_st.state not in ("unknown", "unavailable", None, "")
+            grid_v = parse_optional_float_state(grid_st) if grid_ok else None
+
         soc_st = hass.states.get(soc_ent)
         batt_st = hass.states.get(batt_ent)
 
-        grid_ok = grid_st and grid_st.state not in ("unknown", "unavailable", None, "")
         soc_ok = soc_st and soc_st.state not in ("unknown", "unavailable", None, "")
         batt_ok = batt_st and batt_st.state not in ("unknown", "unavailable", None, "")
 
@@ -521,7 +541,6 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _mark_bad("battery_ac", bool(batt_ok))
 
         ts = now.timestamp()
-        grid_v = parse_optional_float_state(grid_st) if grid_ok else None
         if grid_v is not None:
             self.grid_filter.push(ts, grid_v)
             self.cap_internal_filter.push(ts, grid_v)

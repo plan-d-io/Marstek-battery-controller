@@ -10,6 +10,7 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
+    SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfPower, UnitOfTime
@@ -155,6 +156,8 @@ async def async_setup_entry(
         MarstekDiagnosticSensor(coordinator, entry.entry_id, d, dev_info)
         for d in _all_descriptions(coordinator.runtime.use_internal_cap_now)
     ]
+    if coordinator.runtime.grid_power_poller is not None:
+        entities.append(HomeWizardGridPowerSensor(coordinator, entry.entry_id, dev_info))
     async_add_entities(entities)
 
 
@@ -192,3 +195,39 @@ class MarstekDiagnosticSensor(
                 err,
             )
             return None
+
+
+class HomeWizardGridPowerSensor(
+    CoordinatorEntity[MarstekBatteryCoordinator],
+    SensorEntity,
+):
+    """Diagnostic sensor exposing HomeWizard fast-poll value."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = const.SENSOR_GRID_POWER_FAST
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: MarstekBatteryCoordinator,
+        entry_id: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry_id}_{const.SENSOR_GRID_POWER_FAST}"
+        self._attr_device_info = device_info
+
+    @property
+    def native_value(self) -> float | None:
+        poller = self.coordinator.runtime.grid_power_poller
+        if poller is None or not poller.is_fresh():
+            return None
+        return poller.latest_w
+
+    @property
+    def available(self) -> bool:
+        poller = self.coordinator.runtime.grid_power_poller
+        return poller is not None and poller.is_fresh()

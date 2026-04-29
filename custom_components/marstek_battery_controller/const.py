@@ -79,6 +79,11 @@ CONF_GRID_POWER: Final = "grid_power_entity"
 CONF_CAP_NOW_SENSOR: Final = "cap_now_sensor"
 CONF_MONTHLY_PEAK_SENSOR: Final = "monthly_peak_sensor"
 CONF_USE_DISCOVERY: Final = "use_discovery"
+CONF_GRID_SOURCE_TYPE: Final = "grid_source_type"
+GRID_SOURCE_EXISTING_SENSOR: Final = "existing_sensor"
+GRID_SOURCE_HOMEWIZARD_FAST_POLL: Final = "homewizard_fast_poll"
+CONF_HOMEWIZARD_IP: Final = "homewizard_ip"
+CONF_HOMEWIZARD_POLL_INTERVAL: Final = "homewizard_poll_interval"
 
 # Manual entity keys (when not using discovery)
 CONF_ENTITY_BATTERY_SOC: Final = "battery_soc_entity"
@@ -125,6 +130,11 @@ MAX_MAX_DESIRED_PEAK_W: Final = 10000.0
 
 # Internal cap_now rolling window when user sensor absent (15 minutes).
 CAP_NOW_INTERNAL_WINDOW_S: Final = 900
+DEFAULT_HOMEWIZARD_POLL_INTERVAL_S: Final = 1.0
+HOMEWIZARD_PRODUCT_P1: Final = "HWE-P1"
+HOMEWIZARD_API_TIMEOUT_S: Final = 2.0
+HOMEWIZARD_READY_TIMEOUT_S: Final = 5.0
+HOMEWIZARD_FRESHNESS_LIMIT_S: Final = 5.0
 
 # Inter-write delay for Modbus (§12).
 MODBUS_WRITE_DELAY_S: Final = 0.2
@@ -170,6 +180,11 @@ SENSOR_BATTERY_POWER_SMOOTHED: Final = "battery_power_smoothed"
 SENSOR_CAP_NOW_INTERNAL: Final = "cap_now_internal"
 SENSOR_MINUTES_TO_EVENING_PEAK: Final = "minutes_to_evening_peak"
 SENSOR_ENERGY_NEEDED_EVENING: Final = "energy_needed_for_evening"
+SENSOR_GRID_POWER_FAST: Final = "grid_power_fast"
 
 ISSUE_MODBUS_FAILURES: Final = "modbus_write_failures"
 ISSUE_MARSTEK_MISSING: Final = "marstek_integration_missing"
+VIPER_DOMAIN: Final = "marstek_modbus"
+VIPER_HIGH_INTERVAL_KEY: Final = "high"
+VIPER_HIGH_INTERVAL_RECOMMENDED: Final = 1
+VIPER_HIGH_INTERVAL_DEFAULT_FALLBACK: Final = 10

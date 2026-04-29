@@ -36,6 +36,34 @@
           "set_discharge_power_entity": "Ontlaadvermogen nummer"
         }
       },
+      "scan_interval_consent": {
+        "title": "Batterijpolling versnellen",
+        "description": "De Marstek Modbus-integratie peilt de batterij momenteel elke {current} seconden. Voor betere zelfverbruikssturing raden we aan dit op {recommended} seconde te zetten. De wijziging wordt meteen toegepast en kan later in de opties van de Marstek Modbus-integratie worden teruggedraaid.",
+        "data": {
+          "apply": "Nu peilen op 1 seconde toepassen"
+        }
+      },
+      "grid_source": {
+        "title": "Bron netvermogen",
+        "description": "Kies hoe de integratie het netvermogen meet. Snellere updates geven een vloeiendere regeling.",
+        "data": {
+          "grid_source_type": "Bron"
+        }
+      },
+      "homewizard_pick": {
+        "title": "Kies een HomeWizard P1-apparaat",
+        "description": "Er werden meerdere HomeWizard P1-apparaten gevonden. Kies het apparaat dat op je hoofdmeter is aangesloten.",
+        "data": {
+          "homewizard_ip": "Apparaat"
+        }
+      },
+      "homewizard_manual": {
+        "title": "HomeWizard P1 IP-adres",
+        "description": "Voer het lokale IP-adres van je HomeWizard P1-dongle in. De integratie controleert of het apparaat bereikbaar is en een P1-meter is (geen slimme stekker of ander apparaat).",
+        "data": {
+          "homewizard_ip": "IP-adres"
+        }
+      },
       "grid": {
         "title": "Netvermogen",
         "description": "Selecteer de sensor voor netafname/injectie zoals de digitale meter die meet (elke integratie die een sensor met vermogensklasse exposeert). Positief = afname van het net; negatief = injectie.",
@@ -97,6 +125,8 @@
       "internal_error": "Onverwachte fout in deze stap. Zie home-assistant.log (zoek op marstek_battery_controller).",
       "discovery_failed": "Rollen konden op dit apparaat niet worden gevonden.",
       "device_required": "Selecteer een Marstek-apparaat of schakel handmatige setup in.",
+      "homewizard_unreachable": "De HomeWizard op dit IP-adres is niet bereikbaar. Controleer het adres en of de lokale API is ingeschakeld.",
+      "homewizard_wrong_product": "Dit apparaat is geen HomeWizard P1-meter. Slimme stekkers en andere HomeWizard-apparaten kunnen niet als netvermogensbron worden gebruikt.",
       "invalid_min_max_soc": "Min SoC moet kleiner zijn dan max SoC.",
       "evening_charge_too_high": "Avond max laadvermogen mag niet hoger zijn dan max batterijvermogen.",
       "manual_power_too_high": "Manueel vermogen mag niet hoger zijn dan max batterijvermogen."
@@ -151,6 +181,7 @@
       "effective_cap_threshold": { "name": "Huidig maximaal piekvermogen" },
       "grid_power_smoothed": { "name": "Uitgemiddeld netvermogen" },
       "battery_power_smoothed": { "name": "Uitgemiddeld batterijvermogen" },
+      "grid_power_fast": { "name": "Netvermogen snel (HomeWizard)" },
       "cap_now_internal": { "name": "Cap nu (intern)" },
       "minutes_to_evening_peak": { "name": "Minuten tot avondpiek" },
       "energy_needed_for_evening": { "name": "Energie nodig voor avondpiek" }

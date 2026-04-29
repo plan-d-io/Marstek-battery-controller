@@ -36,6 +36,34 @@
           "set_discharge_power_entity": "Entladeleistung Zahl"
         }
       },
+      "scan_interval_consent": {
+        "title": "Batterie-Abfrage beschleunigen",
+        "description": "Die Marstek-Modbus-Integration fragt die Batterie derzeit alle {current} Sekunden ab. Für die beste Eigenverbrauchsregelung empfehlen wir {recommended} Sekunde. Die Änderung wird sofort angewendet und kann später in den Optionen der Marstek-Modbus-Integration rückgängig gemacht werden.",
+        "data": {
+          "apply": "1-Sekunden-Abfrage jetzt anwenden"
+        }
+      },
+      "grid_source": {
+        "title": "Quelle für Netzleistung",
+        "description": "Wählen Sie, wie die Integration die Netzleistung misst. Schnellere Updates führen zu einer ruhigeren Regelung.",
+        "data": {
+          "grid_source_type": "Quelle"
+        }
+      },
+      "homewizard_pick": {
+        "title": "HomeWizard-P1-Gerät auswählen",
+        "description": "Es wurden mehrere HomeWizard-P1-Geräte erkannt. Wählen Sie das Gerät, das mit Ihrem Hauptzähler verbunden ist.",
+        "data": {
+          "homewizard_ip": "Gerät"
+        }
+      },
+      "homewizard_manual": {
+        "title": "HomeWizard-P1-IP-Adresse",
+        "description": "Geben Sie die lokale IP-Adresse Ihres HomeWizard-P1-Dongles ein. Die Integration prüft, ob das Gerät erreichbar ist und ob es ein P1-Zähler ist (keine Smart-Steckdose oder anderes Gerät).",
+        "data": {
+          "homewizard_ip": "IP-Adresse"
+        }
+      },
       "grid": {
         "title": "Netzleistung",
         "description": "Sensor für Netzbezug/-einspeisung wählen, wie vom intelligenten Stromzähler gemessen (jede Integration mit Leistungssensor). Positiv = Bezug; negativ = Einspeisung.",
@@ -97,6 +125,8 @@
       "internal_error": "Unerwarteter Fehler in diesem Schritt. Einzelheiten stehen in home-assistant.log (nach marstek_battery_controller suchen).",
       "discovery_failed": "Rollen konnten auf diesem Gerät nicht ermittelt werden.",
       "device_required": "Wählen Sie ein Marstek-Gerät oder aktivieren Sie die manuelle Einrichtung.",
+      "homewizard_unreachable": "HomeWizard unter dieser IP-Adresse ist nicht erreichbar. Prüfen Sie die Adresse und ob die lokale API aktiviert ist.",
+      "homewizard_wrong_product": "Dieses Gerät ist kein HomeWizard-P1-Zähler. Smart-Steckdosen und andere HomeWizard-Geräte können nicht als Netzleistungsquelle verwendet werden.",
       "invalid_min_max_soc": "Min-SoC muss kleiner als Max-SoC sein.",
       "evening_charge_too_high": "Abend-Ladeleistung darf nicht über der max. Batterieleistung liegen.",
       "manual_power_too_high": "Manuelle Leistung darf nicht über der max. Batterieleistung liegen."
@@ -151,6 +181,7 @@
       "effective_cap_threshold": { "name": "Effektive Kapazitätsschwelle" },
       "grid_power_smoothed": { "name": "Geglättete Netzleistung" },
       "battery_power_smoothed": { "name": "Geglättete Batterieleistung" },
+      "grid_power_fast": { "name": "Netzleistung schnell (HomeWizard)" },
       "cap_now_internal": { "name": "Kap jetzt (intern)" },
       "minutes_to_evening_peak": { "name": "Minuten bis Abendspitze" },
       "energy_needed_for_evening": { "name": "Benötigte Energie für den Abend" }

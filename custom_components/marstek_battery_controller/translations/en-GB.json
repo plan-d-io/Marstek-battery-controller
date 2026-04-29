@@ -36,6 +36,34 @@
           "set_discharge_power_entity": "Set discharge power number"
         }
       },
+      "scan_interval_consent": {
+        "title": "Speed up battery polling",
+        "description": "The Marstek Modbus integration is currently polling the battery every {current} seconds. For best self-consumption performance, we recommend setting this to {recommended} second. The change is applied immediately and can be reverted later in the Marstek Modbus integration's options.",
+        "data": {
+          "apply": "Apply 1-second polling now"
+        }
+      },
+      "grid_source": {
+        "title": "Grid power source",
+        "description": "Choose how the integration measures grid power. Faster updates produce smoother control.",
+        "data": {
+          "grid_source_type": "Source"
+        }
+      },
+      "homewizard_pick": {
+        "title": "Pick a HomeWizard P1 device",
+        "description": "Multiple HomeWizard P1 devices were detected. Pick the one connected to your main meter.",
+        "data": {
+          "homewizard_ip": "Device"
+        }
+      },
+      "homewizard_manual": {
+        "title": "HomeWizard P1 IP address",
+        "description": "Enter the local IP address of your HomeWizard P1 dongle. The integration will verify that it is reachable and is a P1 meter (not a smart plug or other device).",
+        "data": {
+          "homewizard_ip": "IP address"
+        }
+      },
       "grid": {
         "title": "Grid power",
         "description": "Select the sensor measuring net grid offtake/injection from your digital meter (any integration that exposes a power-class sensor). Positive values must mean offtake from the grid; negative values mean injection.",
@@ -97,6 +125,8 @@
       "internal_error": "Unexpected error in this step. Details are in home-assistant.log (search for marstek_battery_controller).",
       "discovery_failed": "Roles could not be resolved on this device.",
       "device_required": "Select a Marstek device or enable manual setup.",
+      "homewizard_unreachable": "Could not reach the HomeWizard at this IP. Verify the address and that the local API is enabled.",
+      "homewizard_wrong_product": "This device is not a HomeWizard P1 meter. Smart plugs and other HomeWizard devices cannot be used as a grid power source.",
       "invalid_min_max_soc": "Min SoC must be less than max SoC.",
       "evening_charge_too_high": "Evening max charge power cannot exceed max battery power.",
       "manual_power_too_high": "Manual power cannot exceed max battery power."
@@ -151,6 +181,7 @@
       "effective_cap_threshold": { "name": "Effective capacity threshold" },
       "grid_power_smoothed": { "name": "Grid power smoothed" },
       "battery_power_smoothed": { "name": "Battery power smoothed" },
+      "grid_power_fast": { "name": "Grid power fast (HomeWizard)" },
       "cap_now_internal": { "name": "Cap now (internal)" },
       "minutes_to_evening_peak": { "name": "Minutes to evening peak" },
       "energy_needed_for_evening": { "name": "Energy needed for evening" }

@@ -17,6 +17,12 @@ from homeassistant.helpers.selector import SelectSelectorMode
 
 from . import const
 from .discovery import list_marstek_devices, resolve_roles_for_device
+from .homewizard_discovery import HomeWizardCandidate, list_homewizard_p1_candidates, probe_homewizard
+from .viperrnmc_options import (
+    apply_high_interval,
+    find_marstek_modbus_entry_for_device,
+    get_high_interval,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +30,10 @@ STEP_ID_MANUAL = "manual_devices"
 STEP_ID_GRID = "grid"
 STEP_ID_OPTIONAL = "optional"
 STEP_ID_PARAMS = "parameters"
+STEP_ID_SCAN_INTERVAL_CONSENT = "scan_interval_consent"
+STEP_ID_GRID_SOURCE = "grid_source"
+STEP_ID_HOMEWIZARD_PICK = "homewizard_pick"
+STEP_ID_HOMEWIZARD_MANUAL = "homewizard_manual"
 
 
 def _power_sensor_selector_strict() -> selector.EntitySelector:
@@ -298,6 +308,11 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
         self._use_manual: bool = False
         self._manual_entities: dict[str, str] = {}
         self._grid_entity: str = ""
+        self._grid_source: str = const.GRID_SOURCE_EXISTING_SENSOR
+        self._homewizard_ip: str | None = None
+        self._homewizard_candidates: list[HomeWizardCandidate] = []
+        self._marstek_modbus_entry_id: str | None = None
+        self._scan_interval_offered: bool = False
         self._cap_sensor: str | None = None
         self._monthly_sensor: str | None = None
 
@@ -353,15 +368,15 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
             self._picked_device_id = str(device_id)
             self._use_manual = False
             _LOGGER.info(
-                "%s discovery OK device_id=%s → grid step",
+                "%s discovery OK device_id=%s → scan-interval consent step",
                 const.DOMAIN,
                 self._picked_device_id,
             )
             try:
-                return await self.async_step_grid()
+                return await self.async_step_scan_interval_consent()
             except Exception:
                 _LOGGER.exception(
-                    "%s async_step_grid crashed after device pick device_id=%s",
+                    "%s scan/grid-source step crashed after device pick device_id=%s",
                     const.DOMAIN,
                     device_id,
                 )
@@ -425,9 +440,175 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
         )
         if user_input is not None:
             self._manual_entities = user_input
-            return await self.async_step_grid()
+            return await self.async_step_grid_source()
 
         return self.async_show_form(step_id=STEP_ID_MANUAL, data_schema=schema)
+
+    async def async_step_scan_interval_consent(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Offer to set marstek_modbus high-priority polling to 1 s."""
+        if self._use_manual or not self._picked_device_id:
+            return await self.async_step_grid_source()
+
+        entry = find_marstek_modbus_entry_for_device(self.hass, self._picked_device_id)
+        if entry is None:
+            _LOGGER.warning(
+                "Could not find marstek_modbus entry for device_id=%s; skipping consent step",
+                self._picked_device_id,
+            )
+            return await self.async_step_grid_source()
+
+        self._marstek_modbus_entry_id = entry.entry_id
+        current = get_high_interval(entry)
+        if current <= const.VIPER_HIGH_INTERVAL_RECOMMENDED:
+            return await self.async_step_grid_source()
+
+        if user_input is not None:
+            self._scan_interval_offered = True
+            if user_input.get("apply"):
+                try:
+                    await apply_high_interval(
+                        self.hass, entry, const.VIPER_HIGH_INTERVAL_RECOMMENDED
+                    )
+                except Exception:
+                    _LOGGER.exception(
+                        "Failed to update/reload marstek_modbus high interval for entry_id=%s",
+                        entry.entry_id,
+                    )
+            return await self.async_step_grid_source()
+
+        schema = vol.Schema(
+            {vol.Required("apply", default=True): selector.BooleanSelector()}
+        )
+        return self.async_show_form(
+            step_id=STEP_ID_SCAN_INTERVAL_CONSENT,
+            data_schema=schema,
+            description_placeholders={
+                "current": str(current),
+                "recommended": str(const.VIPER_HIGH_INTERVAL_RECOMMENDED),
+            },
+        )
+
+    async def async_step_grid_source(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Choose how to source grid power."""
+        candidates = await list_homewizard_p1_candidates(self.hass)
+        self._homewizard_candidates = candidates
+
+        if user_input is not None:
+            choice = str(user_input["grid_source_type"])
+            if choice == const.GRID_SOURCE_EXISTING_SENSOR:
+                self._grid_source = const.GRID_SOURCE_EXISTING_SENSOR
+                return await self.async_step_grid()
+            if choice == const.GRID_SOURCE_HOMEWIZARD_FAST_POLL:
+                self._grid_source = const.GRID_SOURCE_HOMEWIZARD_FAST_POLL
+                if len(candidates) == 1:
+                    self._homewizard_ip = candidates[0].ip
+                    return await self.async_step_optional()
+                return await self.async_step_homewizard_pick()
+            return await self.async_step_homewizard_manual()
+
+        default = (
+            const.GRID_SOURCE_HOMEWIZARD_FAST_POLL
+            if candidates
+            else const.GRID_SOURCE_EXISTING_SENSOR
+        )
+        options: list[dict[str, str]] = [
+            {
+                "value": const.GRID_SOURCE_EXISTING_SENSOR,
+                "label": "Use an existing power sensor",
+            }
+        ]
+        if candidates:
+            if len(candidates) == 1:
+                cand = candidates[0]
+                label = (
+                    "Fast-poll my HomeWizard P1 "
+                    f"(detected: {cand.title} at {cand.ip}) — recommended"
+                )
+            else:
+                label = f"Fast-poll my HomeWizard P1 ({len(candidates)} detected) — recommended"
+            options.append(
+                {
+                    "value": const.GRID_SOURCE_HOMEWIZARD_FAST_POLL,
+                    "label": label,
+                }
+            )
+        options.append(
+            {
+                "value": "homewizard_manual",
+                "label": "Manually enter HomeWizard P1 IP address",
+            }
+        )
+        schema = vol.Schema(
+            {
+                vol.Required("grid_source_type", default=default): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=options,
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
+            }
+        )
+        return self.async_show_form(step_id=STEP_ID_GRID_SOURCE, data_schema=schema)
+
+    async def async_step_homewizard_pick(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Pick from multiple detected HomeWizard P1 devices."""
+        if user_input is not None:
+            self._homewizard_ip = user_input[const.CONF_HOMEWIZARD_IP]
+            return await self.async_step_optional()
+
+        options = [
+            {"value": cand.ip, "label": f"{cand.title} ({cand.ip})"}
+            for cand in self._homewizard_candidates
+        ]
+        schema = vol.Schema(
+            {
+                vol.Required(const.CONF_HOMEWIZARD_IP): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=options,
+                        mode=SelectSelectorMode.LIST,
+                    )
+                )
+            }
+        )
+        return self.async_show_form(step_id=STEP_ID_HOMEWIZARD_PICK, data_schema=schema)
+
+    async def async_step_homewizard_manual(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manual IP entry for HomeWizard P1."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            ip = str(user_input[const.CONF_HOMEWIZARD_IP]).strip()
+            cand = await probe_homewizard(self.hass, ip)
+            if cand is None:
+                errors["base"] = "homewizard_unreachable"
+            elif cand.product_type != const.HOMEWIZARD_PRODUCT_P1:
+                errors["base"] = "homewizard_wrong_product"
+            else:
+                self._grid_source = const.GRID_SOURCE_HOMEWIZARD_FAST_POLL
+                self._homewizard_ip = ip
+                return await self.async_step_optional()
+
+        default_ip = (
+            str(user_input.get(const.CONF_HOMEWIZARD_IP, ""))
+            if user_input is not None
+            else ""
+        )
+        schema = vol.Schema(
+            {vol.Required(const.CONF_HOMEWIZARD_IP, default=default_ip): str}
+        )
+        return self.async_show_form(
+            step_id=STEP_ID_HOMEWIZARD_MANUAL,
+            data_schema=schema,
+            errors=errors,
+        )
 
     async def async_step_grid(
         self, user_input: dict[str, Any] | None = None
@@ -523,10 +704,14 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
 
             data: dict[str, Any] = {
                 const.CONF_USE_DISCOVERY: not self._use_manual,
-                const.CONF_GRID_POWER: self._grid_entity,
+                const.CONF_GRID_SOURCE_TYPE: self._grid_source,
                 const.CONF_CAP_NOW_SENSOR: self._cap_sensor,
                 const.CONF_MONTHLY_PEAK_SENSOR: self._monthly_sensor,
             }
+            if self._grid_source == const.GRID_SOURCE_EXISTING_SENSOR:
+                data[const.CONF_GRID_POWER] = self._grid_entity
+            else:
+                data[const.CONF_HOMEWIZARD_IP] = self._homewizard_ip
             if self._use_manual:
                 data[const.CONF_MANUAL_ENTITIES] = self._manual_entities
             else:
@@ -537,7 +722,11 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
                     const.CONF_ENTITY_BATTERY_SOC, "manual"
                 )
             )
-            uid = f"{uid}_{self._grid_entity}"
+            if self._grid_source == const.GRID_SOURCE_EXISTING_SENSOR:
+                grid_uid = self._grid_entity
+            else:
+                grid_uid = f"hw_{self._homewizard_ip}"
+            uid = f"{uid}_{grid_uid}"
             await self.async_set_unique_id(uid)
             self._abort_if_unique_id_configured()
 
