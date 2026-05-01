@@ -8,7 +8,7 @@ Custom Home Assistant integration that controls a **Marstek Venus E** home batte
 
 This integration leverages the [**`marstek_modbus`** integration](https://github.com/ViperRNMC/marstek_venus_modbus) by [ViperRNMC](https://github.com/ViperRNMC), which takes care of the Modbus communication to the Marstek battery. 
 
-Everything this integration does can also be done using automations and template sensors, or NodeRED, but if you're looking for an easy solution and are using HACS, this integration is perhaps for you.
+Currently, this integration is just a fancy scheduler. Everything it does can also be done using automations and template sensors, or NodeRED. However if you're looking for an easy solution and are using HACS, this integration is perhaps for you. Click, install, it works.
 
 ## Why this integration exists
 
