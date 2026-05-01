@@ -81,21 +81,21 @@
       },
       "parameters": {
         "title": "Initiële parameters",
-        "description": "Pas standaarden aan; alles kan later in de UI worden gewijzigd.",
+        "description": "Standaarden voor SoC-limieten, timing van het piekvenster, boost/reserve en uitmiddeling. Alles kan later op de apparaatpagina worden gewijzigd.",
         "data": {
-          "min_soc": "Min SoC",
-          "max_soc": "Max SoC",
+          "min_soc": "Minimum SoC",
+          "max_soc": "Maximum SoC",
           "max_battery_power": "Maximaal batterijvermogen",
           "battery_capacity": "Batterijcapaciteit",
           "capacity_tariff_enabled": "Capaciteitstarief ingeschakeld",
           "send_interval": "Interval batterijcommando’s verzenden",
           "grid_smoothing": "Netvermogen uitmiddellingsvenster",
           "battery_smoothing": "Batterijvermogen uitmiddellingsvenster",
-          "evening_min_soc": "Minimale SoC voor avondpiek",
-          "evening_max_charge_power": "Maximaal laadvermogen voor avondpiek",
-          "max_desired_peak": "Maximale 15-min piek",
-          "evening_peak_time": "Avondpiek start",
-          "passive_floor_time": "SoC bescherming start (passieve modus)"
+          "evening_min_soc": "Reserve-doel SoC",
+          "evening_max_charge_power": "Boost-laadvermogen",
+          "max_desired_peak": "Capaciteitstarieflimiet",
+          "evening_peak_time": "Start piekvenster (UU:MM)",
+          "passive_floor_time": "Start reservebescherming (UU:MM)"
         }
       },
       "init": {
@@ -103,21 +103,21 @@
         "description": "Integratieparameters bijwerken.",
         "data": {
           "mode": "Modus",
-          "min_soc": "Min SoC",
-          "max_soc": "Max SoC",
+          "min_soc": "Minimum SoC",
+          "max_soc": "Maximum SoC",
           "max_battery_power": "Maximaal batterijvermogen",
           "battery_capacity": "Batterijcapaciteit",
           "capacity_tariff_enabled": "Capaciteitstarief ingeschakeld",
           "send_interval": "Interval batterijcommando’s verzenden",
           "grid_smoothing": "Netvermogen uitmiddellingsvenster",
           "battery_smoothing": "Batterijvermogen uitmiddellingsvenster",
-          "evening_min_soc": "Minimale SoC voor avondpiek",
-          "evening_max_charge_power": "Maximaal laadvermogen voor avondpiek",
-          "max_desired_peak": "Gewenste max 15-min piek",
+          "evening_min_soc": "Reserve-doel SoC",
+          "evening_max_charge_power": "Boost-laadvermogen",
+          "max_desired_peak": "Capaciteitstarieflimiet",
           "manual_target_soc": "Gewenste SoC (manueel)",
           "manual_power": "Gewenst batterijvermogen (manueel)",
-          "evening_peak_time": "Avondpiek start",
-          "passive_floor_time": "SoC bescherming start (passieve modus)"
+          "evening_peak_time": "Start piekvenster (UU:MM)",
+          "passive_floor_time": "Start reservebescherming (UU:MM)"
         }
       }
     },
@@ -128,7 +128,7 @@
       "homewizard_unreachable": "De HomeWizard op dit IP-adres is niet bereikbaar. Controleer het adres en of de lokale API is ingeschakeld.",
       "homewizard_wrong_product": "Dit apparaat is geen HomeWizard P1-meter. Slimme stekkers en andere HomeWizard-apparaten kunnen niet als netvermogensbron worden gebruikt.",
       "invalid_min_max_soc": "Min SoC moet kleiner zijn dan max SoC.",
-      "evening_charge_too_high": "Avond max laadvermogen mag niet hoger zijn dan max batterijvermogen.",
+      "evening_charge_too_high": "Boost-laadvermogen mag niet hoger zijn dan het maximale batterijvermogen.",
       "manual_power_too_high": "Manueel vermogen mag niet hoger zijn dan max batterijvermogen."
     },
     "abort": {
@@ -142,23 +142,23 @@
         "state": {
           "released": "Vrijgegeven",
           "self_consumption": "Zelfverbruik",
-          "self_consumption_evening_peak": "Zelfverbruik met avondpiekcompensatie",
-          "self_consumption_passive_evening_peak": "Zelfverbruik met passieve avondpiekcompensatie",
+          "self_consumption_boost": "Zelfverbruik + boost",
+          "self_consumption_reserve": "Zelfverbruik + reserve",
           "manual": "Manueel"
         }
       }
     },
     "number": {
-      "min_soc": { "name": "Min SoC (ontlaadvloer)" },
-      "max_soc": { "name": "Max SoC (laadplafond)" },
-      "max_battery_power": { "name": "Max batterijvermogen" },
+      "min_soc": { "name": "Minimum SoC" },
+      "max_soc": { "name": "Maximum SoC" },
+      "max_battery_power": { "name": "Maximaal batterijvermogen" },
       "send_interval": { "name": "Interval batterijcommando’s verzenden" },
-      "grid_smoothing_window": { "name": "Venster netvermogen middelen" },
+      "grid_smoothing_window": { "name": "Netvermogen uitmiddellingsvenster" },
       "battery_smoothing_window": { "name": "Batterijvermogen uitmiddellingsvenster" },
       "battery_capacity": { "name": "Batterijcapaciteit" },
-      "evening_min_soc": { "name": "Minimale SoC voor avondpiekC" },
-      "evening_max_charge_power": { "name": "Maximaal laadvermogen voor avondpiek" },
-      "max_desired_peak": { "name": "Gewenste max 15-min piek" },
+      "reserve_target_soc": { "name": "Reserve-doel SoC" },
+      "boost_charge_power": { "name": "Boost-laadvermogen" },
+      "max_desired_peak": { "name": "Capaciteitstarieflimiet" },
       "manual_target_soc": { "name": "Gewenste SoC (manueel)" },
       "manual_power": { "name": "Gewenst batterijvermogen (manueel)" }
     },
@@ -166,8 +166,8 @@
       "capacity_tariff_enabled": { "name": "Capaciteitstarief ingeschakeld" }
     },
     "time": {
-      "evening_peak_start": { "name": "Avondpiek start" },
-      "passive_floor_protection_start": { "name": "SoC bescherming start (passieve modus)" }
+      "peak_window_start": { "name": "Start piekvenster" },
+      "reserve_protection_start": { "name": "Start reservebescherming" }
     },
     "button": {
       "manual_trigger": { "name": "Stuur manueel commando" }
@@ -175,16 +175,38 @@
     "sensor": {
       "target_setpoint": { "name": "Target setpoint" },
       "last_sent_setpoint": { "name": "Laatst verzonden setpoint" },
-      "operating_state": { "name": "Bedrijfsstatus" },
-      "reason_code": { "name": "Statuscode" },
-      "latest_start_charge": { "name": "Laatste start laden" },
-      "effective_cap_threshold": { "name": "Huidig maximaal piekvermogen" },
+      "operating_state": {
+        "name": "Status",
+        "state": {
+          "released": "Vrijgegeven",
+          "self_consumption": "Zelfverbruik",
+          "boost_charging": "Boost-laden",
+          "reserve_held": "Reserve vastgehouden",
+          "manual_charging": "Manueel laden",
+          "manual_discharging": "Manueel ontladen"
+        }
+      },
+      "reason_code": {
+        "name": "Detail",
+        "state": {
+          "normal": "Normaal",
+          "at_floor": "Minimum SoC bereikt",
+          "at_ceiling": "Maximum SoC bereikt",
+          "cap_tariff": "Pieklimit bereikt",
+          "boost_active": "Boost-laden",
+          "reserve_held": "Reserve vastgehouden",
+          "manual_active": "Manueel commando actief",
+          "released": "Vrijgegeven"
+        }
+      },
+      "latest_start_charge": { "name": "Boost moet starten voor" },
+      "effective_cap_threshold": { "name": "Actieve capaciteitstarieflimiet" },
       "grid_power_smoothed": { "name": "Uitgemiddeld netvermogen" },
       "battery_power_smoothed": { "name": "Uitgemiddeld batterijvermogen" },
       "grid_power_fast": { "name": "Netvermogen snel (HomeWizard)" },
       "cap_now_internal": { "name": "Cap nu (intern)" },
-      "minutes_to_evening_peak": { "name": "Minuten tot avondpiek" },
-      "energy_needed_for_evening": { "name": "Energie nodig voor avondpiek" }
+      "minutes_to_peak_window": { "name": "Minuten tot piekvenster" },
+      "energy_needed_for_reserve": { "name": "Energie nodig voor reserve" }
     }
   }
 }

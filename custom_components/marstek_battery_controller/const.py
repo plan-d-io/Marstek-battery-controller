@@ -32,17 +32,15 @@ ROLE_SUFFIXES: Final[frozenset[str]] = frozenset(
 # Operating modes (English keys, translated labels).
 MODE_RELEASED: Final = "released"
 MODE_SELF_CONSUMPTION: Final = "self_consumption"
-MODE_SELF_CONSUMPTION_EVENING_PEAK: Final = "self_consumption_evening_peak"
-MODE_SELF_CONSUMPTION_PASSIVE_EVENING_PEAK: Final = (
-    "self_consumption_passive_evening_peak"
-)
+MODE_SELF_CONSUMPTION_BOOST: Final = "self_consumption_boost"
+MODE_SELF_CONSUMPTION_RESERVE: Final = "self_consumption_reserve"
 MODE_MANUAL: Final = "manual"
 
 MODES: Final[tuple[str, ...]] = (
     MODE_RELEASED,
     MODE_SELF_CONSUMPTION,
-    MODE_SELF_CONSUMPTION_EVENING_PEAK,
-    MODE_SELF_CONSUMPTION_PASSIVE_EVENING_PEAK,
+    MODE_SELF_CONSUMPTION_BOOST,
+    MODE_SELF_CONSUMPTION_RESERVE,
     MODE_MANUAL,
 )
 
@@ -54,10 +52,19 @@ FORCE_DISCHARGE: Final = "discharge"
 # Diagnostic — operating_state (sensor text).
 STATE_RELEASED: Final = "released"
 STATE_SELF_CONSUMPTION: Final = "self_consumption"
-STATE_PRE_CHARGING: Final = "pre_charging"
-STATE_FLOOR_PROTECTION: Final = "floor_protection"
+STATE_BOOST_CHARGING: Final = "boost_charging"
+STATE_RESERVE_HELD: Final = "reserve_held"
 STATE_MANUAL_CHARGING: Final = "manual_charging"
 STATE_MANUAL_DISCHARGING: Final = "manual_discharging"
+
+OPERATING_STATE_OPTIONS: Final[tuple[str, ...]] = (
+    STATE_RELEASED,
+    STATE_SELF_CONSUMPTION,
+    STATE_BOOST_CHARGING,
+    STATE_RESERVE_HELD,
+    STATE_MANUAL_CHARGING,
+    STATE_MANUAL_DISCHARGING,
+)
 
 # Diagnostic — reason_code (sensor text).
 REASON_NORMAL: Final = "normal"
@@ -65,9 +72,20 @@ REASON_AT_FLOOR: Final = "at_floor"
 REASON_AT_CEILING: Final = "at_ceiling"
 REASON_CAP_TARIFF: Final = "cap_tariff"
 REASON_BOOST_ACTIVE: Final = "boost_active"
-REASON_FLOOR_HELD: Final = "floor_held"
+REASON_RESERVE_HELD: Final = "reserve_held"
 REASON_MANUAL_ACTIVE: Final = "manual_active"
 REASON_RELEASED: Final = "released"
+
+REASON_CODE_OPTIONS: Final[tuple[str, ...]] = (
+    REASON_NORMAL,
+    REASON_AT_FLOOR,
+    REASON_AT_CEILING,
+    REASON_CAP_TARIFF,
+    REASON_BOOST_ACTIVE,
+    REASON_RESERVE_HELD,
+    REASON_MANUAL_ACTIVE,
+    REASON_RELEASED,
+)
 
 # Laadplanning sentinel when no grid charge is needed.
 LATEST_START_NO_NEED: Final = "no_need"
@@ -102,12 +120,12 @@ DEFAULT_SEND_INTERVAL: Final = 5.0
 DEFAULT_GRID_SMOOTHING_WINDOW: Final = 5.0
 DEFAULT_BATTERY_SMOOTHING_WINDOW: Final = 5.0
 DEFAULT_BATTERY_CAPACITY_WH: Final = 5120.0
-DEFAULT_EVENING_PEAK_START_HOUR: Final = 18
-DEFAULT_EVENING_PEAK_START_MINUTE: Final = 0
-DEFAULT_EVENING_MIN_SOC: Final = 50.0
-DEFAULT_EVENING_MAX_CHARGE_POWER: Final = 1250.0
-DEFAULT_PASSIVE_FLOOR_START_HOUR: Final = 13
-DEFAULT_PASSIVE_FLOOR_START_MINUTE: Final = 0
+DEFAULT_PEAK_WINDOW_START_HOUR: Final = 18
+DEFAULT_PEAK_WINDOW_START_MINUTE: Final = 0
+DEFAULT_RESERVE_TARGET_SOC: Final = 50.0
+DEFAULT_BOOST_CHARGE_POWER: Final = 1250.0
+DEFAULT_RESERVE_PROTECTION_START_HOUR: Final = 13
+DEFAULT_RESERVE_PROTECTION_START_MINUTE: Final = 0
 DEFAULT_CAPACITY_TARIFF_ENABLED: Final = True
 DEFAULT_MAX_DESIRED_PEAK_W: Final = 2500.0
 DEFAULT_MANUAL_TARGET_SOC: Final = 50.0
@@ -124,7 +142,7 @@ MIN_SMOOTHING_WINDOW_S: Final = 1.0
 MAX_SMOOTHING_WINDOW_S: Final = 300.0
 MIN_BATTERY_CAPACITY_WH: Final = 800.0
 MAX_BATTERY_CAPACITY_WH: Final = 15360.0
-MIN_EVENING_CHARGE_POWER_W: Final = 100.0
+MIN_BOOST_CHARGE_POWER_W: Final = 100.0
 MIN_MAX_DESIRED_PEAK_W: Final = 100.0
 MAX_MAX_DESIRED_PEAK_W: Final = 10000.0
 
@@ -159,10 +177,10 @@ ENTITY_SEND_INTERVAL: Final = "send_interval"
 ENTITY_GRID_SMOOTHING_WINDOW: Final = "grid_smoothing_window"
 ENTITY_BATTERY_SMOOTHING_WINDOW: Final = "battery_smoothing_window"
 ENTITY_BATTERY_CAPACITY: Final = "battery_capacity"
-ENTITY_EVENING_PEAK_START: Final = "evening_peak_start"
-ENTITY_EVENING_MIN_SOC: Final = "evening_min_soc"
-ENTITY_EVENING_MAX_CHARGE_POWER: Final = "evening_max_charge_power"
-ENTITY_PASSIVE_FLOOR_PROTECTION_START: Final = "passive_floor_protection_start"
+ENTITY_PEAK_WINDOW_START: Final = "peak_window_start"
+ENTITY_RESERVE_TARGET_SOC: Final = "reserve_target_soc"
+ENTITY_BOOST_CHARGE_POWER: Final = "boost_charge_power"
+ENTITY_RESERVE_PROTECTION_START: Final = "reserve_protection_start"
 ENTITY_CAPACITY_TARIFF_ENABLED: Final = "capacity_tariff_enabled"
 ENTITY_MAX_DESIRED_PEAK: Final = "max_desired_peak"
 ENTITY_MANUAL_TARGET_SOC: Final = "manual_target_soc"
@@ -178,8 +196,8 @@ SENSOR_EFFECTIVE_CAP_THRESHOLD: Final = "effective_cap_threshold"
 SENSOR_GRID_POWER_SMOOTHED: Final = "grid_power_smoothed"
 SENSOR_BATTERY_POWER_SMOOTHED: Final = "battery_power_smoothed"
 SENSOR_CAP_NOW_INTERNAL: Final = "cap_now_internal"
-SENSOR_MINUTES_TO_EVENING_PEAK: Final = "minutes_to_evening_peak"
-SENSOR_ENERGY_NEEDED_EVENING: Final = "energy_needed_for_evening"
+SENSOR_MINUTES_TO_PEAK_WINDOW: Final = "minutes_to_peak_window"
+SENSOR_ENERGY_NEEDED_FOR_RESERVE: Final = "energy_needed_for_reserve"
 SENSOR_GRID_POWER_FAST: Final = "grid_power_fast"
 
 ISSUE_MODBUS_FAILURES: Final = "modbus_write_failures"

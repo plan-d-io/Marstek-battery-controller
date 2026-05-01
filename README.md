@@ -10,6 +10,14 @@ This integration leverages the [**`marstek_modbus`** integration](https://github
 
 Everything this integration does can also be done using automations and template sensors, or NodeRED, but if you're looking for an easy solution and are using HACS, this integration is perhaps for you.
 
+## Why this integration exists
+
+In Flanders, many households pay a **capacity tariff**: your bill depends not only on energy (kWh) but on the **highest 15-minute average power** each month, then averaged over 12 months. A single short spike can cost on the order of **€50 per kW per year** — so shaving peaks saves real money.
+
+The stock Marstek control aims at self-consumption but does not know your capacity-tariff budget or **anticipate** daily peaks (evening or morning). This integration adds capacity-tariff awareness and optional **boost** (grid pre-charge before your peak window) or **reserve** (hold SoC from solar only).
+
+You can use it outside Flanders too: turn off the capacity-tariff guard and run plain self-consumption or timed boost/reserve behaviour in any region.
+
 ## Screenshots
 
 *(Placeholder — add dashboard screenshots after deployment.)*
@@ -17,24 +25,46 @@ Everything this integration does can also be done using automations and template
 ## Requirements
 
 - Home Assistant `2025.9` or later
-- HACS installed
-- [ViperRNMC `marstek_modbus` integration](https://github.com/ViperRNMC/marstek_venus_modbus) installed
-- Grid power measurements (preferably a P1 dongle)
+- HACS installed (for HACS install path)
+- The [ViperRNMC `marstek_modbus`](https://github.com/ViperRNMC/marstek_venus_modbus) integration installed and connected to your Marstek Venus E
+- A grid power measurement (see *A note on grid-power update rates* below)
 
-Recommended:
-- Marstek Venus E firmware v144 or later
-- Marstek Venus E connected over wired ethernet
+**Recommended:**
 
-From firmware v144, the Modbus interface is also exposed over the wired ethernet port, removing the need for RS-485 converters like the Elfin. 
+- A HomeWizard P1 meter — the integration auto-detects it during setup and uses its local API for 1-second grid power updates
+- Marstek Venus E firmware v144 or later (Modbus over wired Ethernet, no RS-485 converter required)
+- Marstek Venus E connected over wired Ethernet
 
+## A note on grid-power update rates
 
-## Operating modes
+Home Assistant's standard polling has a **5-second minimum**, and many digital-meter integrations update every **5–10 seconds** by default. That is often too slow for smooth battery control: the controller reacts to load changes that are already seconds old, which encourages overshoot and oscillation.
 
-- **Released**: relinquishes control back to the Marstek app
-- **Self-consumption**: text-book self-consumption: charge with excess power that would otherwise be injected into the grid until SoC reaches max value, discharge to compensate power draw from the grid untill SoC reaches the min value
-- **Self-consumption + evening peak boost**
-- **Self-consumption + passive evening peak**
-- **Manual**
+This integration addresses the **battery** side by offering, during config flow, to set the `marstek_modbus` integration's **high-priority polling to 1 second** (within what Modbus and the inverter allow).
+
+For the **grid** side you have three practical options:
+
+1. **Recommended: HomeWizard P1 dongle.** The integration can auto-detect HomeWizard P1 devices during setup and poll the dongle's local HTTP API at **1 Hz** in-process, bypassing Home Assistant's sensor polling. Best behaviour with minimal setup.
+
+2. **Push-based meter dongles.** Dongles that push readings over MQTT (or similar) can deliver sub-second or 1 Hz updates without HA's polling limit. The [plan-d P1 dongle](https://github.com/plan-d-io/P1-dongle) is one example (1 Hz over MQTT).
+
+3. **A self-built fast sensor.** A REST-based template sensor in `configuration.yaml` with `scan_interval: 1` hitting your meter's local API can produce 1-second updates; select that entity as the grid power sensor. Example for HomeWizard:
+
+     ```yaml
+     rest:
+       - resource: "http://192.168.0.17/api/v1/data"
+         scan_interval: 1
+         sensor:
+           - name: "Power fast"
+             unique_id: "power_fast"
+             value_template: "{{ value_json.active_power_w }}"
+             device_class: power
+             state_class: measurement
+             unit_of_measurement: "W"
+     ```
+
+     The integrated HomeWizard fast-poll path is preferred when available — same data, managed inside this integration.
+
+If you only have a **5–10 s** grid sensor, the integration still works, but expect more setpoint movement. Widening the smoothing windows (e.g. 10 s) reduces noise at the cost of slower response.
 
 ## Installation
 Make sure you have [ViperRNMC `marstek_modbus` integration](https://github.com/ViperRNMC/marstek_venus_modbus) installed first!
@@ -56,75 +86,101 @@ Copy the folder `custom_components/marstek_battery_controller/` into your Home A
 
 ### Configuration flow overview
 
-| Step | What you configure |
-|------|---------------------|
-| **Battery device** | Pick the device discovered from **`marstek_modbus`**, or enable **manual setup** and map **six entities** (`battery_soc`, `ac_power`, RS485 control, force mode select, set charge power, set discharge power`). Those entities are created by **`marstek_modbus`**—the controller only **calls** them; manual mode exists when discovery is unavailable. |
-| **Grid power** | **Required.** Any **sensor with device class Power** (W)—e.g. digital meter / P1 / HomeWizard / SlimmeLezer. Sign convention: **positive = importing from grid**, **negative = exporting**. |
-| **Optional sensors** | Peak demand **this quarter-hour** (`cap_now`) and optional **monthly peak** sensor for capacity-tariff ceiling logic (W). Compatible with integrations that expose suitable power sensors (e.g. DSMR aggregates or projects like **[Peak Power Forecast](https://github.com/Epyon01P/Peak-Power-Forecast)**). |
-| **Initial parameters** | Defaults for SoC limits, smoothing windows, battery capacity, evening limits, capacity tariff flag, times (HH:MM), etc. **Mode defaults to Released** (no mode picker on first setup). Everything stays editable via entities and **Integrations → Configure → Options**. |
+| Step | What it asks | What to choose |
+|------|--------------|----------------|
+| Marstek battery | Which Marstek Venus E to control | Pick the one detected via `marstek_modbus`, or enable manual entity setup if discovery doesn't work |
+| Speed up battery polling | Whether to set `marstek_modbus` to 1-second polling | Recommended: yes. The setting can be changed later in the `marstek_modbus` integration's options |
+| Grid power source | Where to read household grid power from | If you have a HomeWizard P1, pick that (recommended). Otherwise pick an existing power sensor or enter a HomeWizard IP manually |
+| Optional sensors | Two extra inputs for capacity tariff handling | The current quarter-hour average power sensor (typical name: peak demand, kwartiervermogen) and optionally a monthly peak sensor. Both optional — leave empty if you don't have them |
+| Initial parameters | Starting values for SoC limits, peak window time, etc. | Defaults are reasonable; everything is editable later via the device page |
 
-Validation rules: **min SoC < max SoC**; **evening max charge ≤ max battery power**; **manual power ≤ max battery power** (options flow). If **passive floor start** equals **evening peak start**, the passive protection window is empty and a warning is logged.
+### Day-to-day parameters
+
+These are the parameters most users adjust occasionally:
+
+- **Mode** — switch between modes as your needs change (e.g. enable boost during winter, switch back to plain self-consumption in summer)
+- **Minimum SoC** / **Maximum SoC** — battery operating range
+- **Peak window start** — when your evening (or morning) peak typically begins
+- **Reserve target SoC** — how much battery you want available before the peak window starts
+- **Capacity tariff limit** — your monthly peak budget in watts (the integration won't let the battery push you over)
+
+The remaining parameters (smoothing windows, send interval, battery capacity, boost charge power) are advanced and are filed under **Configuration** on the device page.
+
+### Validation rules
+
+**Minimum SoC** must be less than **maximum SoC**; **boost charge power** and **manual power** must not exceed **maximum battery power** (enforced in the options flow). If **reserve protection start** is the same time as **peak window start**, the reserve protection window is empty and a warning is logged.
+
+## Operating modes
+
+- **Released** — relinquishes control back to the Marstek app / native logic.
+- **Self-consumption** — textbook self-consumption: charge with surplus solar that would otherwise be exported, discharge to cover household consumption, all within configurable SoC limits.
+- **Self-consumption + boost** — like self-consumption, but also actively charges the battery from the grid before your configured peak window if it can't reach the reserve target SoC from solar alone. Useful in regions with capacity tariffs to ensure the battery is loaded before the daily consumption peak.
+- **Self-consumption + reserve** — like self-consumption, but stops discharging below the reserve target SoC during the protection window. Charges from solar surplus only; never from the grid. Useful when you want to keep some battery in reserve for the evening but don't want to pay grid-charge costs.
+- **Manual** — directly charge or discharge to a target SoC at a chosen power. Auto-exits to the previously active mode when the target is reached.
+
+## Which mode should I pick?
+
+- **I just want maximum solar self-use, no capacity tariff to worry about** → **Self-consumption**
+- **I have a capacity tariff and I'm OK pre-charging the battery from the grid before my peak window if needed** → **Self-consumption + boost**
+- **I have a capacity tariff but I want the battery to charge from solar only — never from the grid** → **Self-consumption + reserve**
+- **I want to manually charge or discharge to a specific SoC** → **Manual**
+- **I want the Marstek app / Marstek's own logic to control the battery** → **Released**
 
 ## Entities
 
-### Select
+The integration creates a single device with the following entities, organised by where they appear on the device page.
+
+### Controls
 
 | Entity | Purpose |
 |--------|---------|
-| **Mode** | `released`, `self_consumption`, `self_consumption_evening_peak`, `self_consumption_passive_evening_peak`, `manual` (labels are translated). |
+| Mode | The active operating mode |
+| Minimum SoC | Battery won't discharge below this |
+| Maximum SoC | Battery won't charge above this |
+| Maximum battery power | Hard ceiling on battery power, both directions |
+| Capacity tariff enabled | Whether capacity-tariff logic is active |
+| Capacity tariff limit | Your monthly peak budget in watts |
+| Reserve target SoC | The SoC the boost / reserve modes try to ensure for the peak window |
+| Boost charge power | How fast to charge from the grid in boost mode |
+| Peak window start | When your daily peak window begins (HH:MM, time of day) |
+| Reserve protection start | When the reserve mode starts protecting the SoC floor (HH:MM) |
+| Manual target SoC | Target SoC for manual mode |
+| Manual power | Power to apply in manual mode |
+| Manual trigger | Press to activate manual mode with the configured target / power |
 
-### Numbers
-
-| Entity | Purpose |
-|--------|---------|
-| Min SoC (discharge floor) | Lower SoC limit for discharge guard |
-| Max SoC (charge ceiling) | Upper SoC limit for charge guard |
-| Max battery power | Absolute power clamp |
-| Send battery command interval | Seconds between Modbus write ticks |
-| Grid / battery power averaging window | Sliding window length (s) for inputs |
-| Battery capacity | Wh (laadplanning) |
-| Evening min SoC | Target SoC before evening peak |
-| Evening max charge power | Grid boost charge power cap |
-| Max desired 15‑min peak | Base capacity-tariff ceiling (W) |
-| Manual target SoC | Manual mode target |
-| Manual power | Manual charge/discharge magnitude |
-
-### Switch
+### Sensors (main)
 
 | Entity | Purpose |
 |--------|---------|
-| Capacity tariff enabled | Enables capacity-tariff comparisons for boost/floor logic |
+| Status | High-level mode the integration is currently in (`Self-consumption`, `Boost charging`, `Reserve held`, etc.) |
+| Last sent setpoint | The actual signed-watts command the integration last wrote to the battery (positive = discharge, negative = charge) |
 
-### Time (time of day)
+### Sensors (diagnostic)
 
-Wall-clock controls (**no date picker**):
-
-| Entity | Purpose |
-|--------|---------|
-| Evening peak start | End of boost / passive protection window reference |
-| Passive floor-protection start | Start of passive floor window |
-
-### Button
+These are useful for understanding behaviour but most users never need to look at them. They live in the Diagnostic section of the device page.
 
 | Entity | Purpose |
 |--------|---------|
-| Manual trigger | Validates target ≠ current SoC and enters manual mode |
+| Detail | More specific reason the controller is at its current setpoint (e.g. `At minimum SoC`, `Peak limit reached`) |
+| Target setpoint | The setpoint the calculator wants — usually equal to Last sent setpoint, can briefly differ |
+| Active capacity tariff limit | Effective threshold (max of your set limit and the current monthly peak, when known) |
+| Boost must start by | Time at which the boost mode must start charging to reach the reserve target by the peak window |
+| Minutes to peak window | Countdown to the next peak window start |
+| Energy needed for reserve | Wh required to reach the reserve target SoC from current SoC |
+| Grid power smoothed | Internal smoothed value used by the calculator |
+| Battery power smoothed | Internal smoothed value used by the calculator |
+| Grid power fast (HomeWizard) | Real-time grid power from the HomeWizard fast-poll, when active |
 
-### Sensors
+### Configuration
+
+These appear under the Configuration section of the device page. They're advanced tuning parameters — change carefully.
 
 | Entity | Purpose |
 |--------|---------|
-| Target setpoint | Calculator output (W, signed) |
-| Last sent setpoint | Last value written via services |
-| Operating state | `released`, `self_consumption`, `pre_charging`, `floor_protection`, `manual_charging`, `manual_discharging` |
-| Reason code | `normal`, `at_floor`, `at_ceiling`, `cap_tariff`, `boost_active`, `floor_held`, `manual_active`, `released` |
-| Latest start charge | §10 laadplanning (`datetime` state or unavailable when `no_need`) |
-| Effective capacity threshold | Dynamic W threshold (max desired peak vs monthly peak when valid) |
-| Grid power smoothed | Smoothed grid W |
-| Battery power smoothed | Smoothed battery AC W |
-| Cap now (internal) | Only when **no** optional `cap_now` sensor configured—internal rolling mean substitute |
-| Minutes to evening peak | Minutes until next evening peak time |
-| Energy needed for evening | Wh to reach evening min SoC (floored at 0) |
+| Battery command send interval | How often the integration writes to the battery (default 5 s) |
+| Grid power averaging window | Smoothing window for the grid input (default 5 s) |
+| Battery power averaging window | Smoothing window for the battery input (default 5 s) |
+| Battery capacity | Total capacity in Wh used for energy/time calculations |
 
 ## Device-native alternative (not used here)
 

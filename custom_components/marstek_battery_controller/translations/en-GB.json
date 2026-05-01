@@ -81,21 +81,21 @@
       },
       "parameters": {
         "title": "Initial parameters",
-        "description": "Adjust defaults; everything can be changed later in the UI.",
+        "description": "Defaults for SoC limits, peak window timing, boost/reserve settings, and smoothing. Everything can be changed later on the device page.",
         "data": {
-          "min_soc": "Min SoC",
-          "max_soc": "Max SoC",
+          "min_soc": "Minimum SoC",
+          "max_soc": "Maximum SoC",
           "max_battery_power": "Maximum battery power",
           "battery_capacity": "Battery capacity",
           "capacity_tariff_enabled": "Capacity tariff enabled",
-          "send_interval": "Send battery command interval",
+          "send_interval": "Battery command send interval",
           "grid_smoothing": "Grid power averaging window",
           "battery_smoothing": "Battery power averaging window",
-          "evening_min_soc": "Evening min SoC",
-          "evening_max_charge_power": "Evening max charge power",
-          "max_desired_peak": "Max desired 15-min peak",
-          "evening_peak_time": "Evening peak start (HH:MM)",
-          "passive_floor_time": "Passive floor protection start (HH:MM)"
+          "evening_min_soc": "Reserve target SoC",
+          "evening_max_charge_power": "Boost charge power",
+          "max_desired_peak": "Capacity tariff limit",
+          "evening_peak_time": "Peak window start (HH:MM)",
+          "passive_floor_time": "Reserve protection start (HH:MM)"
         }
       },
       "init": {
@@ -103,21 +103,21 @@
         "description": "Update integration parameters.",
         "data": {
           "mode": "Mode",
-          "min_soc": "Min SoC",
-          "max_soc": "Max SoC",
+          "min_soc": "Minimum SoC",
+          "max_soc": "Maximum SoC",
           "max_battery_power": "Maximum battery power",
           "battery_capacity": "Battery capacity",
           "capacity_tariff_enabled": "Capacity tariff enabled",
-          "send_interval": "Send battery command interval",
+          "send_interval": "Battery command send interval",
           "grid_smoothing": "Grid power averaging window",
           "battery_smoothing": "Battery power averaging window",
-          "evening_min_soc": "Evening min SoC",
-          "evening_max_charge_power": "Evening max charge power",
-          "max_desired_peak": "Max desired 15-min peak",
+          "evening_min_soc": "Reserve target SoC",
+          "evening_max_charge_power": "Boost charge power",
+          "max_desired_peak": "Capacity tariff limit",
           "manual_target_soc": "Manual target SoC",
           "manual_power": "Manual power",
-          "evening_peak_time": "Evening peak start (HH:MM)",
-          "passive_floor_time": "Passive floor protection start (HH:MM)"
+          "evening_peak_time": "Peak window start (HH:MM)",
+          "passive_floor_time": "Reserve protection start (HH:MM)"
         }
       }
     },
@@ -128,7 +128,7 @@
       "homewizard_unreachable": "Could not reach the HomeWizard at this IP. Verify the address and that the local API is enabled.",
       "homewizard_wrong_product": "This device is not a HomeWizard P1 meter. Smart plugs and other HomeWizard devices cannot be used as a grid power source.",
       "invalid_min_max_soc": "Min SoC must be less than max SoC.",
-      "evening_charge_too_high": "Evening max charge power cannot exceed max battery power.",
+      "evening_charge_too_high": "Boost charge power cannot exceed maximum battery power.",
       "manual_power_too_high": "Manual power cannot exceed max battery power."
     },
     "abort": {
@@ -142,23 +142,23 @@
         "state": {
           "released": "Released",
           "self_consumption": "Self-consumption",
-          "self_consumption_evening_peak": "Self-consumption with evening peak compensation",
-          "self_consumption_passive_evening_peak": "Self-consumption with passive evening peak compensation",
+          "self_consumption_boost": "Self-consumption + boost",
+          "self_consumption_reserve": "Self-consumption + reserve",
           "manual": "Manual"
         }
       }
     },
     "number": {
-      "min_soc": { "name": "Min SoC (discharge floor)" },
-      "max_soc": { "name": "Max SoC (charge ceiling)" },
-      "max_battery_power": { "name": "Max battery power" },
-      "send_interval": { "name": "Send battery command interval" },
+      "min_soc": { "name": "Minimum SoC" },
+      "max_soc": { "name": "Maximum SoC" },
+      "max_battery_power": { "name": "Maximum battery power" },
+      "send_interval": { "name": "Battery command send interval" },
       "grid_smoothing_window": { "name": "Grid power averaging window" },
       "battery_smoothing_window": { "name": "Battery power averaging window" },
       "battery_capacity": { "name": "Battery capacity" },
-      "evening_min_soc": { "name": "Evening min SoC" },
-      "evening_max_charge_power": { "name": "Evening max charge power" },
-      "max_desired_peak": { "name": "Max desired 15-minute peak" },
+      "reserve_target_soc": { "name": "Reserve target SoC" },
+      "boost_charge_power": { "name": "Boost charge power" },
+      "max_desired_peak": { "name": "Capacity tariff limit" },
       "manual_target_soc": { "name": "Manual target SoC" },
       "manual_power": { "name": "Manual power" }
     },
@@ -166,8 +166,8 @@
       "capacity_tariff_enabled": { "name": "Capacity tariff enabled" }
     },
     "time": {
-      "evening_peak_start": { "name": "Evening peak start" },
-      "passive_floor_protection_start": { "name": "Passive floor-protection start" }
+      "peak_window_start": { "name": "Peak window start" },
+      "reserve_protection_start": { "name": "Reserve protection start" }
     },
     "button": {
       "manual_trigger": { "name": "Manual trigger" }
@@ -175,16 +175,38 @@
     "sensor": {
       "target_setpoint": { "name": "Target setpoint" },
       "last_sent_setpoint": { "name": "Last sent setpoint" },
-      "operating_state": { "name": "Operating state" },
-      "reason_code": { "name": "Reason code" },
-      "latest_start_charge": { "name": "Latest start charge" },
-      "effective_cap_threshold": { "name": "Effective capacity threshold" },
+      "operating_state": {
+        "name": "Status",
+        "state": {
+          "released": "Released",
+          "self_consumption": "Self-consumption",
+          "boost_charging": "Boost charging",
+          "reserve_held": "Reserve held",
+          "manual_charging": "Manual charging",
+          "manual_discharging": "Manual discharging"
+        }
+      },
+      "reason_code": {
+        "name": "Detail",
+        "state": {
+          "normal": "Normal",
+          "at_floor": "At minimum SoC",
+          "at_ceiling": "At maximum SoC",
+          "cap_tariff": "Peak limit reached",
+          "boost_active": "Boost charging",
+          "reserve_held": "Reserve held",
+          "manual_active": "Manual command active",
+          "released": "Released"
+        }
+      },
+      "latest_start_charge": { "name": "Boost must start by" },
+      "effective_cap_threshold": { "name": "Active capacity tariff limit" },
       "grid_power_smoothed": { "name": "Grid power smoothed" },
       "battery_power_smoothed": { "name": "Battery power smoothed" },
       "grid_power_fast": { "name": "Grid power fast (HomeWizard)" },
       "cap_now_internal": { "name": "Cap now (internal)" },
-      "minutes_to_evening_peak": { "name": "Minutes to evening peak" },
-      "energy_needed_for_evening": { "name": "Energy needed for evening" }
+      "minutes_to_peak_window": { "name": "Minutes to peak window" },
+      "energy_needed_for_reserve": { "name": "Energy needed for reserve" }
     }
   }
 }

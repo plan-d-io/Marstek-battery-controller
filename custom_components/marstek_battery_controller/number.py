@@ -36,7 +36,6 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_MIN_SOC,
             translation_key=const.ENTITY_MIN_SOC,
-            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement=PERCENTAGE,
             native_min_value=const.MIN_SOC_PCT,
             native_max_value=const.MAX_SOC_PCT,
@@ -48,7 +47,6 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_MAX_SOC,
             translation_key=const.ENTITY_MAX_SOC,
-            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement=PERCENTAGE,
             native_min_value=const.MIN_SOC_PCT,
             native_max_value=const.MAX_SOC_PCT,
@@ -60,7 +58,6 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
         MarstekNumberEntityDescription(
             key=const.ENTITY_MAX_BATTERY_POWER,
             translation_key=const.ENTITY_MAX_BATTERY_POWER,
-            entity_category=EntityCategory.CONFIG,
             native_unit_of_measurement=UnitOfPower.WATT,
             native_min_value=const.MIN_BATTERY_POWER_W,
             native_max_value=const.MAX_BATTERY_POWER_LIMIT_W,
@@ -118,28 +115,26 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
             coord_set=lambda c, v: c.set_battery_capacity_wh(v),
         ),
         MarstekNumberEntityDescription(
-            key=const.ENTITY_EVENING_MIN_SOC,
-            translation_key=const.ENTITY_EVENING_MIN_SOC,
-            entity_category=EntityCategory.CONFIG,
+            key=const.ENTITY_RESERVE_TARGET_SOC,
+            translation_key=const.ENTITY_RESERVE_TARGET_SOC,
             native_unit_of_measurement=PERCENTAGE,
             native_min_value=const.MIN_SOC_PCT,
             native_max_value=const.MAX_SOC_PCT,
             native_step=1,
             mode="slider",
-            coord_get=lambda c: c.evening_min_soc_value,
-            coord_set=lambda c, v: c.set_evening_min_soc(v),
+            coord_get=lambda c: c.reserve_target_soc_value,
+            coord_set=lambda c, v: c.set_reserve_target_soc(v),
         ),
         MarstekNumberEntityDescription(
-            key=const.ENTITY_EVENING_MAX_CHARGE_POWER,
-            translation_key=const.ENTITY_EVENING_MAX_CHARGE_POWER,
-            entity_category=EntityCategory.CONFIG,
+            key=const.ENTITY_BOOST_CHARGE_POWER,
+            translation_key=const.ENTITY_BOOST_CHARGE_POWER,
             native_unit_of_measurement=UnitOfPower.WATT,
-            native_min_value=const.MIN_EVENING_CHARGE_POWER_W,
+            native_min_value=const.MIN_BOOST_CHARGE_POWER_W,
             native_max_value=const.MAX_BATTERY_POWER_LIMIT_W,
             native_step=50,
             mode="box",
-            coord_get=lambda c: c.evening_max_charge_power_value,
-            coord_set=lambda c, v: c.set_evening_max_charge_power(v),
+            coord_get=lambda c: c.boost_charge_power_value,
+            coord_set=lambda c, v: c.set_boost_charge_power(v),
         ),
         MarstekNumberEntityDescription(
             key=const.ENTITY_MAX_DESIRED_PEAK,
@@ -235,9 +230,9 @@ class MarstekCoordinatorNumber(
             if desc.key == const.ENTITY_MAX_SOC and value <= other:
                 _LOGGER.warning("max_soc must be > min_soc")
                 return
-        if desc.key == const.ENTITY_EVENING_MAX_CHARGE_POWER:
+        if desc.key == const.ENTITY_BOOST_CHARGE_POWER:
             if value > self.coordinator.max_battery_power_value:
-                _LOGGER.warning("evening_max_charge_power exceeds max_battery_power")
+                _LOGGER.warning("boost_charge_power exceeds max_battery_power")
                 return
         if desc.key == const.ENTITY_MANUAL_POWER:
             if value > self.coordinator.max_battery_power_value:

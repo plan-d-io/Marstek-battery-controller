@@ -28,14 +28,14 @@ class CalculatorInputs:
     min_soc: float
     max_soc: float
     max_battery_power_w: float
-    evening_min_soc: float
-    evening_max_charge_power_w: float
+    reserve_target_soc: float
+    boost_charge_power_w: float
     manual_target_soc: float
     manual_power_w: float
-    passive_floor_start: time
-    evening_peak_start: time
+    reserve_protection_start: time
+    peak_window_start: time
     latest_start_charge: datetime | Literal["no_need"]
-    evening_peak_deadline: datetime
+    peak_window_deadline: datetime
     now: datetime
 
 
@@ -103,10 +103,10 @@ def compute_latest_start_charge(
     return latest_start
 
 
-def compute_evening_peak_deadline(evening_peak_start: time, now: datetime) -> datetime:
-    """Today's or tomorrow's occurrence of evening_peak_start for window math."""
+def compute_peak_window_deadline(peak_window_start: time, now: datetime) -> datetime:
+    """Today's or tomorrow's occurrence of peak_window_start for window math."""
     tz = now.tzinfo
-    today_peak = datetime.combine(now.date(), evening_peak_start, tzinfo=tz)
+    today_peak = datetime.combine(now.date(), peak_window_start, tzinfo=tz)
     if today_peak > now:
         return today_peak
     return today_peak + timedelta(days=1)
@@ -124,36 +124,36 @@ def boost_window_active(
 
 
 def protection_window_active(
-    passive_floor_start: time,
-    evening_peak_start: time,
+    reserve_protection_start: time,
+    peak_window_start: time,
     now: datetime,
 ) -> bool:
-    """§6.4 — protection window [passive_floor_start, evening_peak_start)."""
+    """§6.4 — protection window [reserve_protection_start, peak_window_start)."""
     tz = now.tzinfo
     today = now.date()
-    start_dt = datetime.combine(today, passive_floor_start, tzinfo=tz)
-    end_dt = datetime.combine(today, evening_peak_start, tzinfo=tz)
+    start_dt = datetime.combine(today, reserve_protection_start, tzinfo=tz)
+    end_dt = datetime.combine(today, peak_window_start, tzinfo=tz)
     # Normalize if protection start is after peak on calendar day — spec §16: empty window.
     if start_dt >= end_dt:
         return False
     return bool(start_dt <= now < end_dt)
 
 
-def minutes_until_evening_peak(evening_peak_start: time, now: datetime) -> float:
-    """Minutes until next evening_peak_start."""
+def minutes_until_peak_window(peak_window_start: time, now: datetime) -> float:
+    """Minutes until next peak_window_start."""
     tz = now.tzinfo
-    today_peak = datetime.combine(now.date(), evening_peak_start, tzinfo=tz)
+    today_peak = datetime.combine(now.date(), peak_window_start, tzinfo=tz)
     target = today_peak if today_peak > now else today_peak + timedelta(days=1)
     return max(0.0, (target - now).total_seconds() / 60.0)
 
 
-def energy_needed_for_evening_wh(
+def energy_needed_for_reserve_wh(
     current_soc: float,
-    evening_min_soc: float,
+    reserve_target_soc: float,
     battery_capacity_wh: float,
 ) -> float:
-    """Diagnostic §14 — energy needed to reach evening floor."""
-    need = (evening_min_soc - current_soc) / 100.0 * battery_capacity_wh
+    """Diagnostic §14 — energy needed to reach reserve target."""
+    need = (reserve_target_soc - current_soc) / 100.0 * battery_capacity_wh
     return max(0.0, need)
 
 
@@ -233,9 +233,9 @@ def _operating_state_for_mode(mode: str, inp: CalculatorInputs, provisional: boo
     if provisional:
         if mode == const.MODE_SELF_CONSUMPTION:
             return const.STATE_SELF_CONSUMPTION
-        if mode == const.MODE_SELF_CONSUMPTION_EVENING_PEAK:
+        if mode == const.MODE_SELF_CONSUMPTION_BOOST:
             return const.STATE_SELF_CONSUMPTION
-        if mode == const.MODE_SELF_CONSUMPTION_PASSIVE_EVENING_PEAK:
+        if mode == const.MODE_SELF_CONSUMPTION_RESERVE:
             return const.STATE_SELF_CONSUMPTION
         if mode == const.MODE_MANUAL:
             return const.STATE_MANUAL_CHARGING
@@ -254,36 +254,36 @@ def _mode_override(
     if mode == const.MODE_SELF_CONSUMPTION:
         return base, const.STATE_SELF_CONSUMPTION, reason
 
-    if mode == const.MODE_SELF_CONSUMPTION_EVENING_PEAK:
-        deadline = inp.evening_peak_deadline
+    if mode == const.MODE_SELF_CONSUMPTION_BOOST:
+        deadline = inp.peak_window_deadline
         boost_on = boost_window_active(inp.latest_start_charge, deadline, inp.now)
         inside = boost_on and inp.current_soc < inp.max_soc
         under_cap = (not inp.capacity_tariff_enabled) or (inp.cap_now < effective_cap)
         if inside and under_cap:
-            sp = -float(inp.evening_max_charge_power_w)
+            sp = -float(inp.boost_charge_power_w)
             return (
                 sp,
-                const.STATE_PRE_CHARGING,
+                const.STATE_BOOST_CHARGING,
                 const.REASON_BOOST_ACTIVE,
             )
         if inside and inp.capacity_tariff_enabled and inp.cap_now >= effective_cap:
             return base, const.STATE_SELF_CONSUMPTION, const.REASON_CAP_TARIFF
         return base, const.STATE_SELF_CONSUMPTION, reason
 
-    if mode == const.MODE_SELF_CONSUMPTION_PASSIVE_EVENING_PEAK:
+    if mode == const.MODE_SELF_CONSUMPTION_RESERVE:
         if not protection_window_active(
-            inp.passive_floor_start,
-            inp.evening_peak_start,
+            inp.reserve_protection_start,
+            inp.peak_window_start,
             inp.now,
         ):
             return base, const.STATE_SELF_CONSUMPTION, reason
         # Inside protection window
         if (
             base > 0
-            and inp.current_soc <= inp.evening_min_soc
+            and inp.current_soc <= inp.reserve_target_soc
             and ((not inp.capacity_tariff_enabled) or (inp.cap_now < effective_cap))
         ):
-            return 0.0, const.STATE_FLOOR_PROTECTION, const.REASON_FLOOR_HELD
+            return 0.0, const.STATE_RESERVE_HELD, const.REASON_RESERVE_HELD
         if (
             base > 0
             and inp.capacity_tariff_enabled
@@ -306,4 +306,3 @@ def _mode_override(
         return sp, const.STATE_MANUAL_DISCHARGING, const.REASON_MANUAL_ACTIVE
 
     return base, const.STATE_SELF_CONSUMPTION, reason
-

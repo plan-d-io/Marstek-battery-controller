@@ -7,18 +7,18 @@
     },
     "sensor_unavailable": {
       "title": "Capteur critique indisponible",
-      "description": "{name} est resté indisponible trop longtemps ; l’intégration est passée en mode Libéré."
+      "description": "{name} est resté indisponible trop longtemps et l’intégration est passée en mode Relâché."
     },
     "modbus_failures": {
       "title": "Échecs d’écriture Modbus répétés",
-      "description": "{count} écritures consécutives ont échoué via les appels de service marstek_modbus."
+      "description": "{count} écritures consécutives ont échoué via les services marstek_modbus."
     }
   },
   "config": {
     "step": {
       "user": {
         "title": "Appareil Marstek",
-        "description": "Sélectionnez l’appareil exposé par marstek_modbus ou choisissez une configuration manuelle.",
+        "description": "Sélectionnez l’appareil exposé par marstek_modbus ou choisissez la configuration manuelle.",
         "data": {
           "manual": "Configuration manuelle des entités (sans découverte marstek_modbus)",
           "marstek_device_id": "Appareil Marstek Modbus"
@@ -32,104 +32,104 @@
           "ac_power_entity": "Capteur puissance AC batterie",
           "rs485_control_entity": "Interrupteur contrôle RS485",
           "force_mode_entity": "Liste mode forcé",
-          "set_charge_power_entity": "Nombre puissance charge",
-          "set_discharge_power_entity": "Nombre puissance décharge"
+          "set_charge_power_entity": "Réglage puissance charge",
+          "set_discharge_power_entity": "Réglage puissance décharge"
         }
       },
       "scan_interval_consent": {
-        "title": "Accélérer l'interrogation batterie",
-        "description": "L'intégration Marstek Modbus interroge actuellement la batterie toutes les {current} secondes. Pour de meilleures performances d'autoconsommation, nous recommandons {recommended} seconde. Le changement est appliqué immédiatement et peut être annulé plus tard dans les options de l'intégration Marstek Modbus.",
+        "title": "Accélérer l’interrogation batterie",
+        "description": "L’intégration Marstek Modbus interroge actuellement la batterie toutes les {current} secondes. Pour une meilleure autoconsommation, nous recommandons {recommended} seconde. La modification est appliquée immédiatement et peut être annulée dans les options de Marstek Modbus.",
         "data": {
-          "apply": "Appliquer l'interrogation à 1 seconde maintenant"
+          "apply": "Appliquer l’interrogation à 1 seconde"
         }
       },
       "grid_source": {
-        "title": "Source de puissance réseau",
-        "description": "Choisissez comment l'intégration mesure la puissance réseau. Des mises à jour plus rapides donnent une régulation plus fluide.",
+        "title": "Source puissance réseau",
+        "description": "Choisissez comment la puissance réseau est mesurée. Des mises à jour plus rapides donnent une régulation plus fluide.",
         "data": {
           "grid_source_type": "Source"
         }
       },
       "homewizard_pick": {
         "title": "Choisir un appareil HomeWizard P1",
-        "description": "Plusieurs appareils HomeWizard P1 ont été détectés. Choisissez celui connecté à votre compteur principal.",
+        "description": "Plusieurs HomeWizard P1 ont été détectés. Choisissez celui connecté à votre compteur principal.",
         "data": {
           "homewizard_ip": "Appareil"
         }
       },
       "homewizard_manual": {
         "title": "Adresse IP HomeWizard P1",
-        "description": "Entrez l'adresse IP locale de votre dongle HomeWizard P1. L'intégration vérifiera qu'il est accessible et qu'il s'agit d'un compteur P1 (et non d'une prise connectée ou d'un autre appareil).",
+        "description": "Saisissez l’adresse IP locale de votre dongle HomeWizard P1. L’intégration vérifie qu’il est joignable et qu’il s’agit d’un compteur P1.",
         "data": {
           "homewizard_ip": "Adresse IP"
         }
       },
       "grid": {
         "title": "Puissance réseau",
-        "description": "Choisissez le capteur de prélèvement/injection réseau mesuré par le compteur intelligent (toute intégration exposant un capteur de classe puissance). Valeur positive = prélèvement ; valeur négative = injection.",
+        "description": "Sélectionnez le capteur mesurant le bilan réseau import/export (classe puissance). Valeurs positives = import ; négatives = export.",
         "data": {
           "grid_power_entity": "Capteur puissance réseau"
         }
       },
       "optional": {
         "title": "Capteurs optionnels",
-        "description": "Optionnel pour le tarif capacitaire : puissance de pointe du quart d’heure en cours et du mois en cours (capteurs de puissance, souvent issus du compteur ou DSMR).",
+        "description": "Optionnel pour la capacité tarifaire : puissance moyenne du quart d’heure en cours et pic mensuel (capteurs de puissance).",
         "data": {
-          "cap_now_sensor": "Capteur de puissance de pointe du quart d’heure en cours",
-          "monthly_peak_sensor": "Capteur de puissance de pointe du mois en cours"
+          "cap_now_sensor": "Capteur pic du quart d’heure en cours",
+          "monthly_peak_sensor": "Capteur pic du mois en cours"
         }
       },
       "parameters": {
         "title": "Paramètres initiaux",
-        "description": "Ajustez les valeurs par défaut ; tout peut être modifié ensuite dans l’interface.",
+        "description": "Valeurs par défaut pour les limites SoC, les horaires de fenêtre de pic, le boost/réserve et le lissage. Tout est modifiable ensuite sur la page appareil.",
         "data": {
-          "min_soc": "SoC min",
-          "max_soc": "SoC max",
+          "min_soc": "SoC minimum",
+          "max_soc": "SoC maximum",
           "max_battery_power": "Puissance batterie maximale",
           "battery_capacity": "Capacité batterie",
-          "capacity_tariff_enabled": "Tarif capacitaire activé",
+          "capacity_tariff_enabled": "Tarif de capacité activé",
           "send_interval": "Intervalle d’envoi des commandes batterie",
-          "grid_smoothing": "Fenêtre de moyenne de la puissance réseau",
-          "battery_smoothing": "Fenêtre de moyenne de la puissance batterie",
-          "evening_min_soc": "SoC min du soir",
-          "evening_max_charge_power": "Puissance de charge max du soir",
-          "max_desired_peak": "Pic 15 minutes max souhaité",
-          "evening_peak_time": "Début pic du soir (HH:MM)",
-          "passive_floor_time": "Début protection passive du plancher (HH:MM)"
+          "grid_smoothing": "Fenêtre de lissage puissance réseau",
+          "battery_smoothing": "Fenêtre de lissage puissance batterie",
+          "evening_min_soc": "SoC cible de réserve",
+          "evening_max_charge_power": "Puissance de charge boost",
+          "max_desired_peak": "Limite tarif capacité",
+          "evening_peak_time": "Début fenêtre de pic (HH:MM)",
+          "passive_floor_time": "Début protection réserve (HH:MM)"
         }
       },
       "init": {
         "title": "Options",
-        "description": "Mettre à jour les paramètres de l’intégration.",
+        "description": "Mettre à jour les paramètres.",
         "data": {
           "mode": "Mode",
-          "min_soc": "SoC min",
-          "max_soc": "SoC max",
+          "min_soc": "SoC minimum",
+          "max_soc": "SoC maximum",
           "max_battery_power": "Puissance batterie maximale",
           "battery_capacity": "Capacité batterie",
-          "capacity_tariff_enabled": "Tarif capacitaire activé",
+          "capacity_tariff_enabled": "Tarif de capacité activé",
           "send_interval": "Intervalle d’envoi des commandes batterie",
-          "grid_smoothing": "Fenêtre de moyenne de la puissance réseau",
-          "battery_smoothing": "Fenêtre de moyenne de la puissance batterie",
-          "evening_min_soc": "SoC min du soir",
-          "evening_max_charge_power": "Puissance de charge max du soir",
-          "max_desired_peak": "Pic 15 minutes max souhaité",
+          "grid_smoothing": "Fenêtre de lissage puissance réseau",
+          "battery_smoothing": "Fenêtre de lissage puissance batterie",
+          "evening_min_soc": "SoC cible de réserve",
+          "evening_max_charge_power": "Puissance de charge boost",
+          "max_desired_peak": "Limite tarif capacité",
           "manual_target_soc": "SoC cible manuel",
           "manual_power": "Puissance manuelle",
-          "evening_peak_time": "Début pic du soir (HH:MM)",
-          "passive_floor_time": "Début protection passive du plancher (HH:MM)"
+          "evening_peak_time": "Début fenêtre de pic (HH:MM)",
+          "passive_floor_time": "Début protection réserve (HH:MM)"
         }
       }
     },
     "error": {
-      "internal_error": "Erreur inattendue à cette étape. Consultez home-assistant.log (recherchez marstek_battery_controller).",
-      "discovery_failed": "Les rôles n’ont pas pu être résolus sur cet appareil.",
+      "internal_error": "Erreur inattendue. Consultez home-assistant.log (recherchez marstek_battery_controller).",
+      "discovery_failed": "Les rôles n’ont pas pu être résolus pour cet appareil.",
       "device_required": "Sélectionnez un appareil Marstek ou activez la configuration manuelle.",
-      "homewizard_unreachable": "Impossible de joindre le HomeWizard à cette adresse IP. Vérifiez l'adresse et que l'API locale est activée.",
-      "homewizard_wrong_product": "Cet appareil n'est pas un compteur HomeWizard P1. Les prises connectées et autres appareils HomeWizard ne peuvent pas être utilisés comme source de puissance réseau.",
+      "homewizard_unreachable": "Impossible de joindre le HomeWizard à cette adresse.",
+      "homewizard_wrong_product": "Cet appareil n’est pas un compteur HomeWizard P1.",
       "invalid_min_max_soc": "Le SoC min doit être inférieur au SoC max.",
-      "evening_charge_too_high": "La puissance de charge du soir ne peut pas dépasser la puissance batterie max.",
-      "manual_power_too_high": "La puissance manuelle ne peut pas dépasser la puissance batterie max."
+      "evening_charge_too_high": "La puissance de charge boost ne peut pas dépasser la puissance batterie maximale.",
+      "manual_power_too_high": "La puissance manuelle ne peut pas dépasser la puissance batterie maximale."
     },
     "abort": {
       "already_configured": "Déjà configuré"
@@ -140,51 +140,73 @@
       "mode": {
         "name": "Mode",
         "state": {
-          "released": "Libéré",
+          "released": "Relâché",
           "self_consumption": "Autoconsommation",
-          "self_consumption_evening_peak": "Autoconsommation avec compensation du pic du soir",
-          "self_consumption_passive_evening_peak": "Autoconsommation avec compensation passive du pic du soir",
+          "self_consumption_boost": "Autoconsommation + recharge anticipée",
+          "self_consumption_reserve": "Autoconsommation + réserve",
           "manual": "Manuel"
         }
       }
     },
     "number": {
-      "min_soc": { "name": "SoC min (plancher décharge)" },
-      "max_soc": { "name": "SoC max (plafond charge)" },
-      "max_battery_power": { "name": "Puissance batterie max" },
+      "min_soc": { "name": "SoC minimum" },
+      "max_soc": { "name": "SoC maximum" },
+      "max_battery_power": { "name": "Puissance batterie maximale" },
       "send_interval": { "name": "Intervalle d’envoi des commandes batterie" },
-      "grid_smoothing_window": { "name": "Fenêtre de moyenne de la puissance réseau" },
-      "battery_smoothing_window": { "name": "Fenêtre de moyenne de la puissance batterie" },
+      "grid_smoothing_window": { "name": "Fenêtre de lissage puissance réseau" },
+      "battery_smoothing_window": { "name": "Fenêtre de lissage puissance batterie" },
       "battery_capacity": { "name": "Capacité batterie" },
-      "evening_min_soc": { "name": "SoC min du soir" },
-      "evening_max_charge_power": { "name": "Puissance de charge max du soir" },
-      "max_desired_peak": { "name": "Pic 15 minutes max souhaité" },
+      "reserve_target_soc": { "name": "SoC cible de réserve" },
+      "boost_charge_power": { "name": "Puissance de charge boost" },
+      "max_desired_peak": { "name": "Limite tarif capacité" },
       "manual_target_soc": { "name": "SoC cible manuel" },
       "manual_power": { "name": "Puissance manuelle" }
     },
     "switch": {
-      "capacity_tariff_enabled": { "name": "Tarif capacitaire activé" }
+      "capacity_tariff_enabled": { "name": "Tarif de capacité activé" }
     },
     "time": {
-      "evening_peak_start": { "name": "Début pic du soir" },
-      "passive_floor_protection_start": { "name": "Début protection passive du plancher" }
+      "peak_window_start": { "name": "Début fenêtre de pic" },
+      "reserve_protection_start": { "name": "Début protection réserve" }
     },
     "button": {
-      "manual_trigger": { "name": "Déclencheur manuel" }
+      "manual_trigger": { "name": "Déclenchement manuel" }
     },
     "sensor": {
       "target_setpoint": { "name": "Consigne cible" },
       "last_sent_setpoint": { "name": "Dernière consigne envoyée" },
-      "operating_state": { "name": "État de fonctionnement" },
-      "reason_code": { "name": "Code motif" },
-      "latest_start_charge": { "name": "Dernier début de charge" },
-      "effective_cap_threshold": { "name": "Seuil capacitaire effectif" },
+      "operating_state": {
+        "name": "État",
+        "state": {
+          "released": "Relâché",
+          "self_consumption": "Autoconsommation",
+          "boost_charging": "Recharge boost",
+          "reserve_held": "Réserve maintenue",
+          "manual_charging": "Charge manuelle",
+          "manual_discharging": "Décharge manuelle"
+        }
+      },
+      "reason_code": {
+        "name": "Détail",
+        "state": {
+          "normal": "Normal",
+          "at_floor": "SoC minimum atteint",
+          "at_ceiling": "SoC maximum atteint",
+          "cap_tariff": "Limite de pic atteinte",
+          "boost_active": "Recharge boost",
+          "reserve_held": "Réserve maintenue",
+          "manual_active": "Commande manuelle active",
+          "released": "Relâché"
+        }
+      },
+      "latest_start_charge": { "name": "Boost doit démarrer avant" },
+      "effective_cap_threshold": { "name": "Limite effective tarif capacité" },
       "grid_power_smoothed": { "name": "Puissance réseau lissée" },
       "battery_power_smoothed": { "name": "Puissance batterie lissée" },
       "grid_power_fast": { "name": "Puissance réseau rapide (HomeWizard)" },
-      "cap_now_internal": { "name": "Cap actuel (interne)" },
-      "minutes_to_evening_peak": { "name": "Minutes avant pic du soir" },
-      "energy_needed_for_evening": { "name": "Énergie requise pour le soir" }
+      "cap_now_internal": { "name": "Pic actuel (interne)" },
+      "minutes_to_peak_window": { "name": "Minutes avant fenêtre de pic" },
+      "energy_needed_for_reserve": { "name": "Énergie nécessaire pour la réserve" }
     }
   }
 }

@@ -40,9 +40,9 @@ def _apply_options(coordinator: Any, options: dict[str, Any]) -> None:
     if "battery_capacity" in options:
         coordinator.set_battery_capacity_wh(float(options["battery_capacity"]))
     if "evening_min_soc" in options:
-        coordinator.set_evening_min_soc(float(options["evening_min_soc"]))
+        coordinator.set_reserve_target_soc(float(options["evening_min_soc"]))
     if "evening_max_charge_power" in options:
-        coordinator.set_evening_max_charge_power(float(options["evening_max_charge_power"]))
+        coordinator.set_boost_charge_power(float(options["evening_max_charge_power"]))
     if "capacity_tariff_enabled" in options:
         coordinator.set_capacity_tariff_enabled(bool(options["capacity_tariff_enabled"]))
     if "max_desired_peak" in options:
@@ -56,7 +56,7 @@ def _apply_options(coordinator: Any, options: dict[str, Any]) -> None:
         if isinstance(raw, str) and ":" in raw:
             try:
                 h, m = raw.split(":", 1)
-                coordinator.set_evening_peak_time(time(int(h), int(m)))
+                coordinator.set_peak_window_time(time(int(h), int(m)))
             except (TypeError, ValueError):
                 _LOGGER.warning("Invalid evening_peak_time in options: %s", raw)
     if "passive_floor_time" in options:
@@ -64,7 +64,7 @@ def _apply_options(coordinator: Any, options: dict[str, Any]) -> None:
         if isinstance(raw, str) and ":" in raw:
             try:
                 h, m = raw.split(":", 1)
-                coordinator.set_passive_floor_time(time(int(h), int(m)))
+                coordinator.set_reserve_protection_time(time(int(h), int(m)))
             except (TypeError, ValueError):
                 _LOGGER.warning("Invalid passive_floor_time in options: %s", raw)
 

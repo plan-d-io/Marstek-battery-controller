@@ -3,11 +3,11 @@
   "issues": {
     "marstek_unavailable": {
       "title": "Marstek-Modbus-Entitäten nicht gefunden",
-      "description": "Das konfigurierte Marstek-Gerät stellt die erforderlichen Entitäten nicht mehr bereit. Bitte die marstek_modbus-Integration prüfen."
+      "description": "Das konfigurierte Marstek-Gerät stellt die erforderlichen Entitäten nicht mehr bereit. Prüfen Sie die marstek_modbus-Integration."
     },
     "sensor_unavailable": {
       "title": "Kritischer Sensor nicht verfügbar",
-      "description": "{name} war zu lange nicht verfügbar; die Integration wurde in den Modus Freigegeben geschaltet."
+      "description": "{name} war zu lange nicht verfügbar; die Integration wechselte in den Modus Freigegeben."
     },
     "modbus_failures": {
       "title": "Wiederholte Modbus-Schreibfehler",
@@ -18,84 +18,84 @@
     "step": {
       "user": {
         "title": "Marstek-Gerät",
-        "description": "Wählen Sie das von marstek_modbus bereitgestellte Gerät oder eine manuelle Einrichtung.",
+        "description": "Wählen Sie das über marstek_modbus bereitgestellte Gerät oder die manuelle Einrichtung.",
         "data": {
-          "manual": "Manuelle Entitäten (keine marstek_modbus-Erkennung)",
+          "manual": "Manuelle Entitäten (ohne marstek_modbus-Erkennung)",
           "marstek_device_id": "Marstek-Modbus-Gerät"
         }
       },
       "manual_devices": {
         "title": "Manuelle Entitäten",
-        "description": "Wählen Sie jede Entität, die zu den Rollen des Marstek Venus E passt.",
+        "description": "Wählen Sie jede Entität passend zu den Rollen des Marstek Venus E.",
         "data": {
-          "battery_soc_entity": "Batterie-SoC-Sensor",
-          "ac_power_entity": "Batterie-AC-Leistungssensor",
-          "rs485_control_entity": "RS485-Steuerschalter",
-          "force_mode_entity": "Modus-Zwang Auswahl",
-          "set_charge_power_entity": "Ladeleistung Zahl",
-          "set_discharge_power_entity": "Entladeleistung Zahl"
+          "battery_soc_entity": "SoC-Sensor Batterie",
+          "ac_power_entity": "AC-Leistungssensor Batterie",
+          "rs485_control_entity": "RS485-Steuerungsschalter",
+          "force_mode_entity": "Erzwungener Modus Auswahl",
+          "set_charge_power_entity": "Ladeleistung einstellen",
+          "set_discharge_power_entity": "Entladeleistung einstellen"
         }
       },
       "scan_interval_consent": {
-        "title": "Batterie-Abfrage beschleunigen",
-        "description": "Die Marstek-Modbus-Integration fragt die Batterie derzeit alle {current} Sekunden ab. Für die beste Eigenverbrauchsregelung empfehlen wir {recommended} Sekunde. Die Änderung wird sofort angewendet und kann später in den Optionen der Marstek-Modbus-Integration rückgängig gemacht werden.",
+        "title": "Batterieabfrage beschleunigen",
+        "description": "Die Marstek-Modbus-Integration fragt die Batterie derzeit alle {current} Sekunden ab. Für optimale Eigenverbrauchsregelung empfehlen wir {recommended} Sekunde. Die Änderung wirkt sofort und kann später in den Optionen von Marstek Modbus rückgängig gemacht werden.",
         "data": {
-          "apply": "1-Sekunden-Abfrage jetzt anwenden"
+          "apply": "Abfrage auf 1 Sekunde setzen"
         }
       },
       "grid_source": {
-        "title": "Quelle für Netzleistung",
-        "description": "Wählen Sie, wie die Integration die Netzleistung misst. Schnellere Updates führen zu einer ruhigeren Regelung.",
+        "title": "Netzleistungsquelle",
+        "description": "Wählen Sie, wie die Netzleistung gemessen wird. Schnellere Aktualisierungen ermöglichen ruhigere Regelung.",
         "data": {
           "grid_source_type": "Quelle"
         }
       },
       "homewizard_pick": {
-        "title": "HomeWizard-P1-Gerät auswählen",
-        "description": "Es wurden mehrere HomeWizard-P1-Geräte erkannt. Wählen Sie das Gerät, das mit Ihrem Hauptzähler verbunden ist.",
+        "title": "HomeWizard P1 auswählen",
+        "description": "Mehrere HomeWizard P1 wurden gefunden. Wählen Sie das Gerät am Hauptzähler.",
         "data": {
           "homewizard_ip": "Gerät"
         }
       },
       "homewizard_manual": {
-        "title": "HomeWizard-P1-IP-Adresse",
-        "description": "Geben Sie die lokale IP-Adresse Ihres HomeWizard-P1-Dongles ein. Die Integration prüft, ob das Gerät erreichbar ist und ob es ein P1-Zähler ist (keine Smart-Steckdose oder anderes Gerät).",
+        "title": "HomeWizard P1 IP-Adresse",
+        "description": "Geben Sie die lokale IP des HomeWizard P1 ein. Die Integration prüft Erreichbarkeit und Gerätetyp (P1-Zähler).",
         "data": {
           "homewizard_ip": "IP-Adresse"
         }
       },
       "grid": {
         "title": "Netzleistung",
-        "description": "Sensor für Netzbezug/-einspeisung wählen, wie vom intelligenten Stromzähler gemessen (jede Integration mit Leistungssensor). Positiv = Bezug; negativ = Einspeisung.",
+        "description": "Sensor für Netzbezug/-einspeisung (Leistungsklasse). Positiv = Bezug; negativ = Einspeisung.",
         "data": {
           "grid_power_entity": "Netzleistungssensor"
         }
       },
       "optional": {
         "title": "Optionale Sensoren",
-        "description": "Optional für Kapazitätstarif: Spitzenlast im laufenden Viertelstunden- und Monatsfenster (Leistungssensoren, oft vom Zähler oder DSMR).",
+        "description": "Optional für Kapazitätstarif: Viertelstundenmittel und Monatspeak (Leistungssensoren).",
         "data": {
-          "cap_now_sensor": "Sensor Spitzenlast laufende Viertelstunde",
-          "monthly_peak_sensor": "Sensor Spitzenlast laufender Monat"
+          "cap_now_sensor": "Sensor aktuelle Viertelstundenleistung",
+          "monthly_peak_sensor": "Sensor Monatspeak"
         }
       },
       "parameters": {
         "title": "Anfangsparameter",
-        "description": "Standards anpassen; alles kann später in der Oberfläche geändert werden.",
+        "description": "Standardwerte für SoC-Grenzen, Peak-Fenster-Zeiten, Boost/Reserve und Glättung. Alles später auf der Geräteseite änderbar.",
         "data": {
-          "min_soc": "Min-SoC",
-          "max_soc": "Max-SoC",
+          "min_soc": "Minimal-SoC",
+          "max_soc": "Maximal-SoC",
           "max_battery_power": "Maximale Batterieleistung",
           "battery_capacity": "Batteriekapazität",
           "capacity_tariff_enabled": "Kapazitätstarif aktiv",
-          "send_interval": "Intervall Batteriebefehle senden",
-          "grid_smoothing": "Mittelungsfenster Netzleistung",
-          "battery_smoothing": "Mittelungsfenster Batterieleistung",
-          "evening_min_soc": "Abend Min-SoC",
-          "evening_max_charge_power": "Abend max. Ladeleistung",
-          "max_desired_peak": "Gewünschte max. 15-Min-Spitze",
-          "evening_peak_time": "Abendspitzenbeginn (HH:MM)",
-          "passive_floor_time": "Passiver Bodenschutz Beginn (HH:MM)"
+          "send_interval": "Intervall Batteriebefehle",
+          "grid_smoothing": "Glättungsfenster Netzleistung",
+          "battery_smoothing": "Glättungsfenster Batterieleistung",
+          "evening_min_soc": "Reserve-Ziel-SoC",
+          "evening_max_charge_power": "Boost-Ladeleistung",
+          "max_desired_peak": "Kapazitätstarif-Grenze",
+          "evening_peak_time": "Peak-Fenster Start (HH:MM)",
+          "passive_floor_time": "Reserve-Schutz Start (HH:MM)"
         }
       },
       "init": {
@@ -103,33 +103,33 @@
         "description": "Integrationsparameter aktualisieren.",
         "data": {
           "mode": "Modus",
-          "min_soc": "Min-SoC",
-          "max_soc": "Max-SoC",
+          "min_soc": "Minimal-SoC",
+          "max_soc": "Maximal-SoC",
           "max_battery_power": "Maximale Batterieleistung",
           "battery_capacity": "Batteriekapazität",
           "capacity_tariff_enabled": "Kapazitätstarif aktiv",
-          "send_interval": "Intervall Batteriebefehle senden",
-          "grid_smoothing": "Mittelungsfenster Netzleistung",
-          "battery_smoothing": "Mittelungsfenster Batterieleistung",
-          "evening_min_soc": "Abend Min-SoC",
-          "evening_max_charge_power": "Abend max. Ladeleistung",
-          "max_desired_peak": "Gewünschte max. 15-Min-Spitze",
+          "send_interval": "Intervall Batteriebefehle",
+          "grid_smoothing": "Glättungsfenster Netzleistung",
+          "battery_smoothing": "Glättungsfenster Batterieleistung",
+          "evening_min_soc": "Reserve-Ziel-SoC",
+          "evening_max_charge_power": "Boost-Ladeleistung",
+          "max_desired_peak": "Kapazitätstarif-Grenze",
           "manual_target_soc": "Manuelles Ziel-SoC",
           "manual_power": "Manuelle Leistung",
-          "evening_peak_time": "Abendspitzenbeginn (HH:MM)",
-          "passive_floor_time": "Passiver Bodenschutz Beginn (HH:MM)"
+          "evening_peak_time": "Peak-Fenster Start (HH:MM)",
+          "passive_floor_time": "Reserve-Schutz Start (HH:MM)"
         }
       }
     },
     "error": {
-      "internal_error": "Unerwarteter Fehler in diesem Schritt. Einzelheiten stehen in home-assistant.log (nach marstek_battery_controller suchen).",
-      "discovery_failed": "Rollen konnten auf diesem Gerät nicht ermittelt werden.",
-      "device_required": "Wählen Sie ein Marstek-Gerät oder aktivieren Sie die manuelle Einrichtung.",
-      "homewizard_unreachable": "HomeWizard unter dieser IP-Adresse ist nicht erreichbar. Prüfen Sie die Adresse und ob die lokale API aktiviert ist.",
-      "homewizard_wrong_product": "Dieses Gerät ist kein HomeWizard-P1-Zähler. Smart-Steckdosen und andere HomeWizard-Geräte können nicht als Netzleistungsquelle verwendet werden.",
+      "internal_error": "Unerwarteter Fehler. Siehe home-assistant.log (marstek_battery_controller).",
+      "discovery_failed": "Rollen konnten für dieses Gerät nicht ermittelt werden.",
+      "device_required": "Marstek-Gerät wählen oder manuelle Einrichtung aktivieren.",
+      "homewizard_unreachable": "HomeWizard unter dieser IP nicht erreichbar.",
+      "homewizard_wrong_product": "Dies ist kein HomeWizard P1-Zähler.",
       "invalid_min_max_soc": "Min-SoC muss kleiner als Max-SoC sein.",
-      "evening_charge_too_high": "Abend-Ladeleistung darf nicht über der max. Batterieleistung liegen.",
-      "manual_power_too_high": "Manuelle Leistung darf nicht über der max. Batterieleistung liegen."
+      "evening_charge_too_high": "Boost-Ladeleistung darf die maximale Batterieleistung nicht überschreiten.",
+      "manual_power_too_high": "Manuelle Leistung darf die maximale Batterieleistung nicht überschreiten."
     },
     "abort": {
       "already_configured": "Bereits konfiguriert"
@@ -142,23 +142,23 @@
         "state": {
           "released": "Freigegeben",
           "self_consumption": "Eigenverbrauch",
-          "self_consumption_evening_peak": "Eigenverbrauch mit Abendspitzenausgleich",
-          "self_consumption_passive_evening_peak": "Eigenverbrauch mit passivem Abendspitzenausgleich",
+          "self_consumption_boost": "Eigenverbrauch + Vorladung",
+          "self_consumption_reserve": "Eigenverbrauch + Reserve",
           "manual": "Manuell"
         }
       }
     },
     "number": {
-      "min_soc": { "name": "Min-SoC (Entladeboden)" },
-      "max_soc": { "name": "Max-SoC (Ladedecke)" },
-      "max_battery_power": { "name": "Max. Batterieleistung" },
-      "send_interval": { "name": "Intervall Batteriebefehle senden" },
-      "grid_smoothing_window": { "name": "Mittelungsfenster Netzleistung" },
-      "battery_smoothing_window": { "name": "Mittelungsfenster Batterieleistung" },
+      "min_soc": { "name": "Minimal-SoC" },
+      "max_soc": { "name": "Maximal-SoC" },
+      "max_battery_power": { "name": "Maximale Batterieleistung" },
+      "send_interval": { "name": "Intervall Batteriebefehle" },
+      "grid_smoothing_window": { "name": "Glättungsfenster Netzleistung" },
+      "battery_smoothing_window": { "name": "Glättungsfenster Batterieleistung" },
       "battery_capacity": { "name": "Batteriekapazität" },
-      "evening_min_soc": { "name": "Abend Min-SoC" },
-      "evening_max_charge_power": { "name": "Abend max. Ladeleistung" },
-      "max_desired_peak": { "name": "Gewünschte max. 15-Min-Spitze" },
+      "reserve_target_soc": { "name": "Reserve-Ziel-SoC" },
+      "boost_charge_power": { "name": "Boost-Ladeleistung" },
+      "max_desired_peak": { "name": "Kapazitätstarif-Grenze" },
       "manual_target_soc": { "name": "Manuelles Ziel-SoC" },
       "manual_power": { "name": "Manuelle Leistung" }
     },
@@ -166,25 +166,47 @@
       "capacity_tariff_enabled": { "name": "Kapazitätstarif aktiv" }
     },
     "time": {
-      "evening_peak_start": { "name": "Abendspitzenbeginn" },
-      "passive_floor_protection_start": { "name": "Passiver Bodenschutz Beginn" }
+      "peak_window_start": { "name": "Peak-Fenster Start" },
+      "reserve_protection_start": { "name": "Reserve-Schutz Start" }
     },
     "button": {
       "manual_trigger": { "name": "Manuelle Auslösung" }
     },
     "sensor": {
-      "target_setpoint": { "name": "Ziel-Sollwert" },
+      "target_setpoint": { "name": "Zielsollwert" },
       "last_sent_setpoint": { "name": "Zuletzt gesendeter Sollwert" },
-      "operating_state": { "name": "Betriebszustand" },
-      "reason_code": { "name": "Grundcode" },
-      "latest_start_charge": { "name": "Spätester Ladestart" },
-      "effective_cap_threshold": { "name": "Effektive Kapazitätsschwelle" },
+      "operating_state": {
+        "name": "Status",
+        "state": {
+          "released": "Freigegeben",
+          "self_consumption": "Eigenverbrauch",
+          "boost_charging": "Vorladung aktiv",
+          "reserve_held": "Reserve gehalten",
+          "manual_charging": "Manuelles Laden",
+          "manual_discharging": "Manuelle Entladung"
+        }
+      },
+      "reason_code": {
+        "name": "Detail",
+        "state": {
+          "normal": "Normal",
+          "at_floor": "Minimal-SoC erreicht",
+          "at_ceiling": "Maximal-SoC erreicht",
+          "cap_tariff": "Peak-Grenze erreicht",
+          "boost_active": "Vorladung aktiv",
+          "reserve_held": "Reserve gehalten",
+          "manual_active": "Manueller Befehl aktiv",
+          "released": "Freigegeben"
+        }
+      },
+      "latest_start_charge": { "name": "Boost muss starten bis" },
+      "effective_cap_threshold": { "name": "Aktive Kapazitätstarif-Grenze" },
       "grid_power_smoothed": { "name": "Geglättete Netzleistung" },
       "battery_power_smoothed": { "name": "Geglättete Batterieleistung" },
       "grid_power_fast": { "name": "Netzleistung schnell (HomeWizard)" },
-      "cap_now_internal": { "name": "Kap jetzt (intern)" },
-      "minutes_to_evening_peak": { "name": "Minuten bis Abendspitze" },
-      "energy_needed_for_evening": { "name": "Benötigte Energie für den Abend" }
+      "cap_now_internal": { "name": "Aktueller Peak (intern)" },
+      "minutes_to_peak_window": { "name": "Minuten bis Peak-Fenster" },
+      "energy_needed_for_reserve": { "name": "Energiebedarf für Reserve" }
     }
   }
 }

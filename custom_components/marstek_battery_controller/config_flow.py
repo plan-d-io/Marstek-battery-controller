@@ -209,7 +209,7 @@ def _param_schema_defaults(
     schema_dict[
         vol.Optional(
             "evening_min_soc",
-            default=d.get("evening_min_soc", const.DEFAULT_EVENING_MIN_SOC),
+            default=d.get("evening_min_soc", const.DEFAULT_RESERVE_TARGET_SOC),
         )
     ] = selector.NumberSelector(
         selector.NumberSelectorConfig(
@@ -224,12 +224,12 @@ def _param_schema_defaults(
         vol.Optional(
             "evening_max_charge_power",
             default=d.get(
-                "evening_max_charge_power", const.DEFAULT_EVENING_MAX_CHARGE_POWER
+                "evening_max_charge_power", const.DEFAULT_BOOST_CHARGE_POWER
             ),
         )
     ] = selector.NumberSelector(
         selector.NumberSelectorConfig(
-            min=const.MIN_EVENING_CHARGE_POWER_W,
+            min=const.MIN_BOOST_CHARGE_POWER_W,
             max=const.MAX_BATTERY_POWER_LIMIT_W,
             step=50,
             mode=selector.NumberSelectorMode.BOX,
@@ -678,8 +678,8 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
             "grid_smoothing": const.DEFAULT_GRID_SMOOTHING_WINDOW,
             "battery_smoothing": const.DEFAULT_BATTERY_SMOOTHING_WINDOW,
             "battery_capacity": const.DEFAULT_BATTERY_CAPACITY_WH,
-            "evening_min_soc": const.DEFAULT_EVENING_MIN_SOC,
-            "evening_max_charge_power": const.DEFAULT_EVENING_MAX_CHARGE_POWER,
+            "evening_min_soc": const.DEFAULT_RESERVE_TARGET_SOC,
+            "evening_max_charge_power": const.DEFAULT_BOOST_CHARGE_POWER,
             "capacity_tariff_enabled": const.DEFAULT_CAPACITY_TARIFF_ENABLED,
             "max_desired_peak": const.DEFAULT_MAX_DESIRED_PEAK_W,
             "manual_target_soc": const.DEFAULT_MANUAL_TARGET_SOC,
@@ -769,8 +769,8 @@ class MarstekBatteryOptionsFlow(OptionsFlow):
             "grid_smoothing": const.DEFAULT_GRID_SMOOTHING_WINDOW,
             "battery_smoothing": const.DEFAULT_BATTERY_SMOOTHING_WINDOW,
             "battery_capacity": const.DEFAULT_BATTERY_CAPACITY_WH,
-            "evening_min_soc": const.DEFAULT_EVENING_MIN_SOC,
-            "evening_max_charge_power": const.DEFAULT_EVENING_MAX_CHARGE_POWER,
+            "evening_min_soc": const.DEFAULT_RESERVE_TARGET_SOC,
+            "evening_max_charge_power": const.DEFAULT_BOOST_CHARGE_POWER,
             "capacity_tariff_enabled": const.DEFAULT_CAPACITY_TARIFF_ENABLED,
             "max_desired_peak": const.DEFAULT_MAX_DESIRED_PEAK_W,
             "manual_target_soc": const.DEFAULT_MANUAL_TARGET_SOC,

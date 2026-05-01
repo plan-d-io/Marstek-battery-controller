@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 import logging
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -39,13 +40,35 @@ class MarstekDiagDescription(SensorEntityDescription):
     """Diagnostic row from §14."""
 
     value_fn: Callable[[MarstekBatteryCoordinator], StateType | datetime | None]
+    enum_options: tuple[str, ...] | None = None
+    registry_enabled_default: bool | None = None
 
 
 def _all_descriptions(
     include_internal_cap: bool,
 ) -> tuple[MarstekDiagDescription, ...]:
-    """Build diagnostic sensors for this config entry."""
-    core: list[MarstekDiagDescription] = [
+    """Build sensors for this config entry."""
+    main_sensors: list[MarstekDiagDescription] = [
+        MarstekDiagDescription(
+            key=const.SENSOR_OPERATING_STATE,
+            translation_key=const.SENSOR_OPERATING_STATE,
+            entity_category=None,
+            enum_options=const.OPERATING_STATE_OPTIONS,
+            value_fn=lambda c: c.last_calc_output.operating_state
+            if c.last_calc_output
+            else None,
+        ),
+        MarstekDiagDescription(
+            key=const.SENSOR_LAST_SENT_SETPOINT,
+            translation_key=const.SENSOR_LAST_SENT_SETPOINT,
+            native_unit_of_measurement=UnitOfPower.WATT,
+            device_class=SensorDeviceClass.POWER,
+            entity_category=None,
+            value_fn=lambda c: c.last_sent_setpoint,
+        ),
+    ]
+
+    diagnostic_core: list[MarstekDiagDescription] = [
         MarstekDiagDescription(
             key=const.SENSOR_TARGET_SETPOINT,
             translation_key=const.SENSOR_TARGET_SETPOINT,
@@ -55,25 +78,10 @@ def _all_descriptions(
             value_fn=lambda c: c.target_setpoint,
         ),
         MarstekDiagDescription(
-            key=const.SENSOR_LAST_SENT_SETPOINT,
-            translation_key=const.SENSOR_LAST_SENT_SETPOINT,
-            native_unit_of_measurement=UnitOfPower.WATT,
-            device_class=SensorDeviceClass.POWER,
-            entity_category=EntityCategory.DIAGNOSTIC,
-            value_fn=lambda c: c.last_sent_setpoint,
-        ),
-        MarstekDiagDescription(
-            key=const.SENSOR_OPERATING_STATE,
-            translation_key=const.SENSOR_OPERATING_STATE,
-            entity_category=EntityCategory.DIAGNOSTIC,
-            value_fn=lambda c: c.last_calc_output.operating_state
-            if c.last_calc_output
-            else None,
-        ),
-        MarstekDiagDescription(
             key=const.SENSOR_REASON_CODE,
             translation_key=const.SENSOR_REASON_CODE,
             entity_category=EntityCategory.DIAGNOSTIC,
+            enum_options=const.REASON_CODE_OPTIONS,
             value_fn=lambda c: c.last_calc_output.reason_code
             if c.last_calc_output
             else None,
@@ -110,38 +118,40 @@ def _all_descriptions(
             value_fn=lambda c: c.snapshot_batt_smoothed,
         ),
     ]
+
     if include_internal_cap:
-        core.append(
+        diagnostic_core.append(
             MarstekDiagDescription(
                 key=const.SENSOR_CAP_NOW_INTERNAL,
                 translation_key=const.SENSOR_CAP_NOW_INTERNAL,
                 native_unit_of_measurement=UnitOfPower.WATT,
                 device_class=SensorDeviceClass.POWER,
                 entity_category=EntityCategory.DIAGNOSTIC,
+                registry_enabled_default=False,
                 value_fn=lambda c: c.snapshot_cap_now,
             )
         )
-    core.extend(
-        [
-            MarstekDiagDescription(
-                key=const.SENSOR_MINUTES_TO_EVENING_PEAK,
-                translation_key=const.SENSOR_MINUTES_TO_EVENING_PEAK,
-                native_unit_of_measurement=UnitOfTime.MINUTES,
-                entity_category=EntityCategory.DIAGNOSTIC,
-                suggested_display_precision=1,
-                value_fn=lambda c: c.diagnostic_minutes_to_peak(),
-            ),
-            MarstekDiagDescription(
-                key=const.SENSOR_ENERGY_NEEDED_EVENING,
-                translation_key=const.SENSOR_ENERGY_NEEDED_EVENING,
-                native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
-                device_class=SensorDeviceClass.ENERGY,
-                entity_category=EntityCategory.DIAGNOSTIC,
-                value_fn=lambda c: c.diagnostic_energy_needed_evening_wh(),
-            ),
-        ]
-    )
-    return tuple(core)
+
+    diagnostic_tail: list[MarstekDiagDescription] = [
+        MarstekDiagDescription(
+            key=const.SENSOR_MINUTES_TO_PEAK_WINDOW,
+            translation_key=const.SENSOR_MINUTES_TO_PEAK_WINDOW,
+            native_unit_of_measurement=UnitOfTime.MINUTES,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            suggested_display_precision=1,
+            value_fn=lambda c: c.diagnostic_minutes_to_peak(),
+        ),
+        MarstekDiagDescription(
+            key=const.SENSOR_ENERGY_NEEDED_FOR_RESERVE,
+            translation_key=const.SENSOR_ENERGY_NEEDED_FOR_RESERVE,
+            native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
+            device_class=SensorDeviceClass.ENERGY,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            value_fn=lambda c: c.diagnostic_energy_needed_reserve_wh(),
+        ),
+    ]
+
+    return tuple(main_sensors + diagnostic_core + diagnostic_tail)
 
 
 async def async_setup_entry(
@@ -149,7 +159,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create diagnostic sensors."""
+    """Create sensors."""
     coordinator: MarstekBatteryCoordinator = hass.data[const.DOMAIN][entry.entry_id]
     dev_info = marstek_controller_device_info(hass, entry)
     entities = [
@@ -165,7 +175,7 @@ class MarstekDiagnosticSensor(
     CoordinatorEntity[MarstekBatteryCoordinator],
     SensorEntity,
 ):
-    """Read-only diagnostic value from coordinator."""
+    """Read-only sensor value from coordinator."""
 
     entity_description: MarstekDiagDescription
     _attr_has_entity_name = True
@@ -183,6 +193,12 @@ class MarstekDiagnosticSensor(
         self._attr_unique_id = f"{entry_id}_{description.key}"
         self._attr_device_info = device_info
 
+        if description.enum_options is not None:
+            self._attr_device_class = SensorDeviceClass.ENUM
+            self._attr_options = list(description.enum_options)
+        if description.registry_enabled_default is not None:
+            self._attr_entity_registry_enabled_default = description.registry_enabled_default
+
     @property
     def native_value(self) -> StateType | datetime | None:
         """Poll coordinator snapshot."""
@@ -190,7 +206,7 @@ class MarstekDiagnosticSensor(
             return self.entity_description.value_fn(self.coordinator)
         except Exception as err:
             _LOGGER.debug(
-                "Diagnostic read failed for %s: %s",
+                "Sensor read failed for %s: %s",
                 self.entity_description.key,
                 err,
             )

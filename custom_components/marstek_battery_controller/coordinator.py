@@ -17,13 +17,14 @@ from homeassistant.util import dt as dt_util
 from . import const
 from .calculator import (
     CalculatorInputs,
+    CalculatorOutput,
     compute_base,
-    compute_evening_peak_deadline,
     compute_latest_start_charge,
+    compute_peak_window_deadline,
     compute_setpoint,
     effective_cap_threshold_w,
-    energy_needed_for_evening_wh,
-    minutes_until_evening_peak,
+    energy_needed_for_reserve_wh,
+    minutes_until_peak_window,
 )
 from .discovery import ResolvedEntities
 from .modbus_writer import MarstekModbusWriter
@@ -123,8 +124,8 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._state_change_unsubs: list[CALLBACK_TYPE] = []
         self._tick_unsub: CALLBACK_TYPE | None = None
 
-        self._evening_peak_time = datetime.strptime("18:00", "%H:%M").time()
-        self._passive_floor_time = datetime.strptime("13:00", "%H:%M").time()
+        self._peak_window_time = datetime.strptime("18:00", "%H:%M").time()
+        self._reserve_protection_time = datetime.strptime("13:00", "%H:%M").time()
 
         self._snapshot_grid_smoothed: float = 0.0
         self._snapshot_batt_smoothed: float = 0.0
@@ -137,8 +138,8 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._max_soc = const.DEFAULT_MAX_SOC
         self._max_battery_power = const.DEFAULT_MAX_BATTERY_POWER
         self._battery_capacity_wh = const.DEFAULT_BATTERY_CAPACITY_WH
-        self._evening_min_soc = const.DEFAULT_EVENING_MIN_SOC
-        self._evening_max_charge_power = const.DEFAULT_EVENING_MAX_CHARGE_POWER
+        self._reserve_target_soc = const.DEFAULT_RESERVE_TARGET_SOC
+        self._boost_charge_power = const.DEFAULT_BOOST_CHARGE_POWER
         self._max_desired_peak_w = const.DEFAULT_MAX_DESIRED_PEAK_W
         self._manual_target_soc = const.DEFAULT_MANUAL_TARGET_SOC
         self._manual_power = const.DEFAULT_MANUAL_POWER
@@ -218,14 +219,14 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._battery_capacity_wh
 
     @property
-    def evening_min_soc_value(self) -> float:
-        """Evening target SoC (%)."""
-        return self._evening_min_soc
+    def reserve_target_soc_value(self) -> float:
+        """Reserve target SoC (%)."""
+        return self._reserve_target_soc
 
     @property
-    def evening_max_charge_power_value(self) -> float:
-        """Evening boost charge power (W)."""
-        return self._evening_max_charge_power
+    def boost_charge_power_value(self) -> float:
+        """Boost charge power from grid (W)."""
+        return self._boost_charge_power
 
     @property
     def max_desired_peak_value(self) -> float:
@@ -266,15 +267,15 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._async_recalc()
 
-    def set_evening_min_soc(self, value: float) -> None:
-        """Evening target floor."""
-        self._evening_min_soc = value
+    def set_reserve_target_soc(self, value: float) -> None:
+        """Reserve target SoC for peak window."""
+        self._reserve_target_soc = value
         self._async_recalc()
 
-    def set_evening_max_charge_power(self, value: float) -> None:
+    def set_boost_charge_power(self, value: float) -> None:
         """Grid boost charge power cap."""
-        self._evening_max_charge_power = max(
-            const.MIN_EVENING_CHARGE_POWER_W,
+        self._boost_charge_power = max(
+            const.MIN_BOOST_CHARGE_POWER_W,
             min(value, self._max_battery_power),
         )
         self._async_recalc()
@@ -298,31 +299,31 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._async_recalc()
 
-    def set_evening_peak_time(self, value: datetime | time) -> None:
-        """Evening peak time-of-day."""
+    def set_peak_window_time(self, value: datetime | time) -> None:
+        """Peak window start time-of-day."""
         if isinstance(value, datetime):
-            self._evening_peak_time = value.time().replace(tzinfo=None)
+            self._peak_window_time = value.time().replace(tzinfo=None)
         elif isinstance(value, time):
-            self._evening_peak_time = value.replace(tzinfo=None)
+            self._peak_window_time = value.replace(tzinfo=None)
         self._async_recalc()
 
-    def set_passive_floor_time(self, value: datetime | time) -> None:
-        """Passive protection start time."""
+    def set_reserve_protection_time(self, value: datetime | time) -> None:
+        """Reserve protection window start time."""
         if isinstance(value, datetime):
-            self._passive_floor_time = value.time().replace(tzinfo=None)
+            self._reserve_protection_time = value.time().replace(tzinfo=None)
         elif isinstance(value, time):
-            self._passive_floor_time = value.replace(tzinfo=None)
+            self._reserve_protection_time = value.replace(tzinfo=None)
         self._async_recalc()
 
     @property
-    def evening_peak_time_value(self) -> time:
-        """Evening peak as local time."""
-        return self._evening_peak_time
+    def peak_window_time_value(self) -> time:
+        """Peak window start as local time."""
+        return self._peak_window_time
 
     @property
-    def passive_floor_time_value(self) -> time:
-        """Passive floor protection start as local time."""
-        return self._passive_floor_time
+    def reserve_protection_time_value(self) -> time:
+        """Reserve protection start as local time."""
+        return self._reserve_protection_time
 
     @property
     def snapshot_grid_smoothed(self) -> float:
@@ -355,14 +356,14 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "grid_smoothing": self._grid_smooth_s,
             "battery_smoothing": self._battery_smooth_s,
             "battery_capacity": self._battery_capacity_wh,
-            "evening_min_soc": self._evening_min_soc,
-            "evening_max_charge_power": self._evening_max_charge_power,
+            "evening_min_soc": self._reserve_target_soc,
+            "evening_max_charge_power": self._boost_charge_power,
             "capacity_tariff_enabled": self._capacity_tariff_enabled,
             "max_desired_peak": self._max_desired_peak_w,
             "manual_target_soc": self._manual_target_soc,
             "manual_power": self._manual_power,
-            "evening_peak_time": self._evening_peak_time.strftime("%H:%M"),
-            "passive_floor_time": self._passive_floor_time.strftime("%H:%M"),
+            "evening_peak_time": self._peak_window_time.strftime("%H:%M"),
+            "passive_floor_time": self._reserve_protection_time.strftime("%H:%M"),
         }
 
     def persist_entry_options(self, hass: HomeAssistant, entry_id: str) -> None:
@@ -417,9 +418,9 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         self._schedule_tick()
-        if self._passive_floor_time >= self._evening_peak_time:
+        if self._reserve_protection_time >= self._peak_window_time:
             _LOGGER.warning(
-                "Passive floor protection start is not before evening peak; "
+                "Reserve protection start is not before peak window start; "
                 "protection window is empty (§16)",
             )
         self.hass.async_create_task(self._async_run_calculator())
@@ -577,13 +578,13 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "unavailable",
             )
 
-        deadline = compute_evening_peak_deadline(self._evening_peak_time, now)
+        deadline = compute_peak_window_deadline(self._peak_window_time, now)
         ls = compute_latest_start_charge(
             soc_now=current_soc,
-            soc_target=self._evening_min_soc,
-            p_max_w=self._evening_max_charge_power,
+            soc_target=self._reserve_target_soc,
+            p_max_w=self._boost_charge_power,
             batt_wh=self._battery_capacity_wh,
-            peak_time=self._evening_peak_time,
+            peak_time=self._peak_window_time,
             now=now,
         )
 
@@ -603,14 +604,14 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             min_soc=self._min_soc,
             max_soc=self._max_soc,
             max_battery_power_w=self._max_battery_power,
-            evening_min_soc=self._evening_min_soc,
-            evening_max_charge_power_w=self._evening_max_charge_power,
+            reserve_target_soc=self._reserve_target_soc,
+            boost_charge_power_w=self._boost_charge_power,
             manual_target_soc=self._manual_target_soc,
             manual_power_w=self._manual_power,
-            passive_floor_start=self._passive_floor_time,
-            evening_peak_start=self._evening_peak_time,
+            reserve_protection_start=self._reserve_protection_time,
+            peak_window_start=self._peak_window_time,
             latest_start_charge=ls,
-            evening_peak_deadline=deadline,
+            peak_window_deadline=deadline,
             now=now,
         )
 
@@ -721,16 +722,16 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             monthly_ok,
         )
 
-    def diagnostic_energy_needed_evening_wh(self) -> float:
-        """§14 energy Wh to evening floor."""
+    def diagnostic_energy_needed_reserve_wh(self) -> float:
+        """§14 energy Wh to reserve target."""
         soc_st = self.hass.states.get(self.runtime.resolved.battery_soc)
         cur = float(parse_optional_float_state(soc_st) or 0.0)
-        return energy_needed_for_evening_wh(
+        return energy_needed_for_reserve_wh(
             cur,
-            self._evening_min_soc,
+            self._reserve_target_soc,
             self._battery_capacity_wh,
         )
 
     def diagnostic_minutes_to_peak(self) -> float:
-        """Minutes until evening peak."""
-        return minutes_until_evening_peak(self._evening_peak_time, dt_util.now())
+        """Minutes until peak window start."""
+        return minutes_until_peak_window(self._peak_window_time, dt_util.now())

@@ -11,11 +11,11 @@ from custom_components.marstek_battery_controller import const
 from custom_components.marstek_battery_controller.calculator import (
     CalculatorInputs,
     compute_base,
-    compute_evening_peak_deadline,
+    compute_peak_window_deadline,
     compute_latest_start_charge,
     compute_setpoint,
     effective_cap_threshold_w,
-    energy_needed_for_evening_wh,
+    energy_needed_for_reserve_wh,
     protection_window_active,
 )
 
@@ -38,14 +38,14 @@ def _inp(**kwargs: object) -> CalculatorInputs:
         min_soc=12.0,
         max_soc=100.0,
         max_battery_power_w=2500.0,
-        evening_min_soc=50.0,
-        evening_max_charge_power_w=1250.0,
+        reserve_target_soc=50.0,
+        boost_charge_power_w=1250.0,
         manual_target_soc=50.0,
         manual_power_w=1000.0,
-        passive_floor_start=time(13, 0),
-        evening_peak_start=time(18, 0),
+        reserve_protection_start=time(13, 0),
+        peak_window_start=time(18, 0),
         latest_start_charge=const.LATEST_START_NO_NEED,
-        evening_peak_deadline=datetime(2026, 4, 27, 18, 0, tzinfo=ZoneInfo("Europe/Brussels")),
+        peak_window_deadline=datetime(2026, 4, 27, 18, 0, tzinfo=ZoneInfo("Europe/Brussels")),
         now=datetime(2026, 4, 27, 12, 0, 0, tzinfo=ZoneInfo("Europe/Brussels")),
     )
     defaults.update(kwargs)
@@ -120,20 +120,20 @@ def test_evening_boost() -> None:
     """§6.3 forced charge inside boost window under cap."""
     peak = time(18, 0)
     now = datetime(2026, 4, 27, 17, 0, 0, tzinfo=ZoneInfo("Europe/Brussels"))
-    deadline = compute_evening_peak_deadline(peak, now)
+    deadline = compute_peak_window_deadline(peak, now)
     ls = datetime(2026, 4, 27, 16, 0, 0, tzinfo=ZoneInfo("Europe/Brussels"))
     out = compute_setpoint(
         _inp(
-            mode=const.MODE_SELF_CONSUMPTION_EVENING_PEAK,
+            mode=const.MODE_SELF_CONSUMPTION_BOOST,
             grid_smoothed=100.0,
             battery_smoothed=0.0,
             current_soc=40.0,
             max_soc=100.0,
             cap_now=100.0,
             max_desired_peak_w=2500.0,
-            evening_max_charge_power_w=1250.0,
+            boost_charge_power_w=1250.0,
             latest_start_charge=ls,
-            evening_peak_deadline=deadline,
+            peak_window_deadline=deadline,
             now=now,
         )
     )
@@ -141,24 +141,24 @@ def test_evening_boost() -> None:
     assert out.reason_code == const.REASON_BOOST_ACTIVE
 
 
-def test_passive_floor_hold() -> None:
-    """§6.4 clamp discharge to 0 below evening floor under cap."""
+def test_reserve_mode_hold() -> None:
+    """§6.4 clamp discharge to 0 below reserve target under cap."""
     now = datetime(2026, 4, 27, 14, 0, 0, tzinfo=ZoneInfo("Europe/Brussels"))
     assert protection_window_active(time(13, 0), time(18, 0), now) is True
     out = compute_setpoint(
         _inp(
-            mode=const.MODE_SELF_CONSUMPTION_PASSIVE_EVENING_PEAK,
+            mode=const.MODE_SELF_CONSUMPTION_RESERVE,
             grid_smoothed=500.0,
             battery_smoothed=0.0,
             current_soc=40.0,
-            evening_min_soc=50.0,
+            reserve_target_soc=50.0,
             cap_now=100.0,
             max_desired_peak_w=2500.0,
             now=now,
         )
     )
     assert out.setpoint_w == 0
-    assert out.operating_state == const.STATE_FLOOR_PROTECTION
+    assert out.operating_state == const.STATE_RESERVE_HELD
 
 
 def test_latest_start_no_need() -> None:
@@ -193,7 +193,7 @@ def test_latest_start_finite() -> None:
     assert ls < datetime(2026, 4, 27, 18, 0, 0, tzinfo=brussels)
 
 
-def test_energy_needed_evening() -> None:
+def test_energy_needed_reserve() -> None:
     """§14 energy diagnostic floored at 0."""
-    assert energy_needed_for_evening_wh(60.0, 50.0, 5000.0) == 0.0
-    assert energy_needed_for_evening_wh(40.0, 50.0, 5000.0) == pytest.approx(500.0)
+    assert energy_needed_for_reserve_wh(60.0, 50.0, 5000.0) == 0.0
+    assert energy_needed_for_reserve_wh(40.0, 50.0, 5000.0) == pytest.approx(500.0)
