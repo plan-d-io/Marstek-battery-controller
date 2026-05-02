@@ -1,3 +1,4 @@
 automations/
 architecture/
 marstek-modbus/
+*.code-workspace
