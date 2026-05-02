@@ -4,7 +4,7 @@
 [![GitHub Issues](https://img.shields.io/github/issues/plan-d-io/Marstek-battery-controller)](https://github.com/plan-d-io/Marstek-battery-controller/issues)
 [![Downloads](https://img.shields.io/github/downloads/plan-d-io/Marstek-battery-controller/total)](https://github.com/plan-d-io/Marstek-battery-controller/releases)
 
-Custom Home Assistant integration that controls a **Marstek Venus E** home battery for **self-consumption**, **peak consumption compensation** with optional **pre-evening grid charging**, and full **manual control**. It's meant as a more robust replacement for the default Marstek control, which can be spotty, also offering additional features like preserving some energy to avoid consumption peaks (e.g. during the evening, where under normal control the battery could already be empty).
+Custom Home Assistant integration that controls a **Marstek Venus E** home battery for **self-consumption**, **peak consumption compensation** with optional **pre-peak grid charging**, and full **manual control**. It's meant as a more robust replacement for the default Marstek control, which can be spotty, also offering additional features like preserving some energy to avoid consumption peaks (e.g. during the evening, where under normal control the battery could already be empty).
 
 This integration leverages the [**`marstek_modbus`** integration](https://github.com/ViperRNMC/marstek_venus_modbus) by [ViperRNMC](https://github.com/ViperRNMC), which takes care of the Modbus communication to the Marstek battery. 
 
@@ -14,13 +14,9 @@ Currently, this integration is just a fancy scheduler. Everything it does can al
 
 In Flanders, many households pay a **capacity tariff**: your bill depends not only on energy (kWh) but on the **highest 15-minute average power** each month, then averaged over 12 months. A single short spike can cost on the order of **€50 per kW per year** — so shaving peaks saves real money.
 
-The stock Marstek control aims at self-consumption but does not know your capacity-tariff budget or **anticipate** daily peaks (evening or morning). This integration adds capacity-tariff awareness and optional **boost** (grid pre-charge before your peak window) or **reserve** (hold SoC from solar only).
+The stock Marstek control aims at self-consumption but does not know your capacity-tariff budget or **anticipates** daily peaks (evening or morning). This integration adds capacity-tariff awareness and optional **boost charging** (grid pre-charge before your peak window) or **reserve** (hold SoC from solar only).
 
 You can use it outside Flanders too: turn off the capacity-tariff guard and run plain self-consumption or timed boost/reserve behaviour in any region.
-
-## Screenshots
-
-*(Placeholder — add dashboard screenshots after deployment.)*
 
 ## Requirements
 
@@ -31,38 +27,23 @@ You can use it outside Flanders too: turn off the capacity-tariff guard and run 
 
 **Recommended:**
 
-- A HomeWizard P1 meter — the integration auto-detects it during setup and uses its local API for 1-second grid power updates
+- A P1 dongle or other grid power sensor with an update rate of at least 1 HZ. See note and recommendations below
 - Marstek Venus E firmware v144 or later (Modbus over wired Ethernet, no RS-485 converter required)
 - Marstek Venus E connected over wired Ethernet
 
 ## A note on grid-power update rates
 
-Home Assistant's standard polling has a **5-second minimum**, and many digital-meter integrations update every **5–10 seconds** by default. That is often too slow for smooth battery control: the controller reacts to load changes that are already seconds old, which encourages overshoot and oscillation.
+Home Assistant does not allow official integrations to have a polling rate faster than **5 seconds**. As such, many digital-meter integrations only update every **5–10 seconds** or so. That is often too slow for smooth battery control: the controller reacts to load changes that are already seconds old, leading to overshoot and oscillations.
 
-This integration addresses the **battery** side by offering, during config flow, to set the `marstek_modbus` integration's **high-priority polling to 1 second** (within what Modbus and the inverter allow).
+This integration addresses the **battery** side by offering, during config flow, to set the `marstek_modbus` integration's **high-priority polling to 1 second** (within what Modbus and the inverter allow). I have extensively tested this on my setup, and have not encountered any issues with dropped commands.
 
 For the **grid** side you have three practical options:
 
-1. **Recommended: HomeWizard P1 dongle.** The integration can auto-detect HomeWizard P1 devices during setup and poll the dongle's local HTTP API at **1 Hz** in-process, bypassing Home Assistant's sensor polling. Best behaviour with minimal setup.
+1. **HomeWizard P1 dongle.** The integration can auto-detect HomeWizard P1 devices during setup and poll the dongle's local HTTP API at **1 Hz**, bypassing Home Assistant's sensor polling. Best behaviour with minimal setup.
 
 2. **Push-based meter dongles.** Dongles that push readings over MQTT (or similar) can deliver sub-second or 1 Hz updates without HA's polling limit. The [plan-d P1 dongle](https://github.com/plan-d-io/P1-dongle) is one example (1 Hz over MQTT).
 
-3. **A self-built fast sensor.** A REST-based template sensor in `configuration.yaml` with `scan_interval: 1` hitting your meter's local API can produce 1-second updates; select that entity as the grid power sensor. Example for HomeWizard:
-
-     ```yaml
-     rest:
-       - resource: "http://192.168.0.17/api/v1/data"
-         scan_interval: 1
-         sensor:
-           - name: "Power fast"
-             unique_id: "power_fast"
-             value_template: "{{ value_json.active_power_w }}"
-             device_class: power
-             state_class: measurement
-             unit_of_measurement: "W"
-     ```
-
-     The integrated HomeWizard fast-poll path is preferred when available — same data, managed inside this integration.
+3. **A self-built fast sensor.** E.g. a REST-based template sensor in `configuration.yaml` with `scan_interval: 1` hitting your meter's local API can produce 1-second updates; select that entity as the grid power sensor. 
 
 If you only have a **5–10 s** grid sensor, the integration still works, but expect more setpoint movement. Widening the smoothing windows (e.g. 10 s) reduces noise at the cost of slower response.
 
@@ -120,11 +101,11 @@ The remaining parameters (smoothing windows, send interval, battery capacity, bo
 
 ## Which mode should I pick?
 
-- **I just want maximum solar self-use, no capacity tariff to worry about** → **Self-consumption**
-- **I have a capacity tariff and I'm OK pre-charging the battery from the grid before my peak window if needed** → **Self-consumption + boost**
-- **I have a capacity tariff but I want the battery to charge from solar only — never from the grid** → **Self-consumption + reserve**
-- **I want to manually charge or discharge to a specific SoC** → **Manual**
-- **I want the Marstek app / Marstek's own logic to control the battery** → **Released**
+- I just want maximum solar self-use, no capacity tariff to worry about → **Self-consumption**
+- I have a capacity tariff and I'm OK pre-charging the battery from the grid before my peak window if needed (max captar is respected) → **Self-consumption + boost**
+- I have a capacity tariff but I want the battery to charge from solar only — never from the grid → **Self-consumption + reserve**
+- I want to manually charge or discharge to a specific SoC → **Manual**
+- I want the Marstek app / Marstek's own logic to control the battery → **Released**
 
 ## Entities
 
