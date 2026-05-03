@@ -83,9 +83,12 @@ These are the parameters most users adjust occasionally:
 - **Minimum SoC** / **Maximum SoC** — battery operating range
 - **Peak window start** — when your evening (or morning) peak typically begins
 - **Reserve target SoC** — how much battery you want available before the peak window starts
-- **Capacity tariff limit** — your monthly peak budget in watts (the integration won't let the battery push you over)
+- **Boost charge power** — how fast the battery can charge from the grid in boost mode
+- **Capacity tariff limit** — the maximum peak power this integration should respect: 
+  * when charging from the grid in boost mode, it will never exceed this limit (meaning the battery will charge slower if other energy consumption is present)
+  * when storing reserve energy for a later peak in passive boost mode, the battery will start to discharge if it dectects peak consumption will exceed this value
 
-The remaining parameters (smoothing windows, send interval, battery capacity, boost charge power) are advanced and are filed under **Configuration** on the device page.
+The remaining parameters (smoothing windows, send interval, battery capacity) are advanced and are filed under **Configuration** on the device page.
 
 ### Validation rules
 
@@ -116,7 +119,7 @@ The integration creates a single device with the following entities, organised b
 | Entity | Purpose |
 |--------|---------|
 | Mode | The active operating mode |
-| Minimum SoC | Battery won't discharge below this |
+| Minimum SoC | Battery won't discharge below this (note that Marstek enforces a minimum SoC of 12%) |
 | Maximum SoC | Battery won't charge above this |
 | Maximum battery power | Hard ceiling on battery power, both directions |
 | Capacity tariff enabled | Whether capacity-tariff logic is active |
