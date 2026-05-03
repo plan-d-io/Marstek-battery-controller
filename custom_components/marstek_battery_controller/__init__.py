@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
-from datetime import time
+from datetime import datetime, time
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +17,25 @@ PLATFORMS = ["select", "number", "switch", "time", "button", "sensor"]
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+
+
+def _parse_wall_clock_time(raw: Any) -> time | None:
+    """Parse options stored as datetime.time, datetime, or 'HH:MM' / 'HH:MM:SS' strings."""
+    if isinstance(raw, time):
+        return raw.replace(tzinfo=None)
+    if isinstance(raw, datetime):
+        return raw.time().replace(tzinfo=None)
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if ":" not in s:
+        return None
+    for fmt in ("%H:%M:%S.%f", "%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(s, fmt).time().replace(tzinfo=None)
+        except ValueError:
+            continue
+    return None
 
 
 def _apply_options(coordinator: Any, options: dict[str, Any]) -> None:
@@ -52,21 +71,23 @@ def _apply_options(coordinator: Any, options: dict[str, Any]) -> None:
     if "manual_power" in options:
         coordinator.set_manual_power(float(options["manual_power"]))
     if "evening_peak_time" in options:
-        raw = options["evening_peak_time"]
-        if isinstance(raw, str) and ":" in raw:
-            try:
-                h, m = raw.split(":", 1)
-                coordinator.set_peak_window_time(time(int(h), int(m)))
-            except (TypeError, ValueError):
-                _LOGGER.warning("Invalid evening_peak_time in options: %s", raw)
+        parsed = _parse_wall_clock_time(options["evening_peak_time"])
+        if parsed is not None:
+            coordinator.set_peak_window_time(parsed)
+        else:
+            _LOGGER.warning(
+                "Invalid evening_peak_time in options: %s",
+                options["evening_peak_time"],
+            )
     if "passive_floor_time" in options:
-        raw = options["passive_floor_time"]
-        if isinstance(raw, str) and ":" in raw:
-            try:
-                h, m = raw.split(":", 1)
-                coordinator.set_reserve_protection_time(time(int(h), int(m)))
-            except (TypeError, ValueError):
-                _LOGGER.warning("Invalid passive_floor_time in options: %s", raw)
+        parsed = _parse_wall_clock_time(options["passive_floor_time"])
+        if parsed is not None:
+            coordinator.set_reserve_protection_time(parsed)
+        else:
+            _LOGGER.warning(
+                "Invalid passive_floor_time in options: %s",
+                options["passive_floor_time"],
+            )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
