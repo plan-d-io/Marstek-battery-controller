@@ -204,5 +204,5 @@ ISSUE_MODBUS_FAILURES: Final = "modbus_write_failures"
 ISSUE_MARSTEK_MISSING: Final = "marstek_integration_missing"
 VIPER_DOMAIN: Final = "marstek_modbus"
 VIPER_HIGH_INTERVAL_KEY: Final = "high"
-VIPER_HIGH_INTERVAL_RECOMMENDED: Final = 1
+VIPER_HIGH_INTERVAL_RECOMMENDED: Final = 2
 VIPER_HIGH_INTERVAL_DEFAULT_FALLBACK: Final = 10

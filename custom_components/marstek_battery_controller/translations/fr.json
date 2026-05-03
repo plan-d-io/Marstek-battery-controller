@@ -38,9 +38,9 @@
       },
       "scan_interval_consent": {
         "title": "Accélérer l’interrogation batterie",
-        "description": "L’intégration Marstek Modbus interroge actuellement la batterie toutes les {current} secondes. Pour une meilleure autoconsommation, nous recommandons {recommended} seconde. La modification est appliquée immédiatement et peut être annulée dans les options de Marstek Modbus.",
+        "description": "L’intégration Marstek Modbus interroge actuellement la batterie toutes les {current} secondes. Pour une meilleure autoconsommation, nous recommandons {recommended} secondes. La modification est appliquée immédiatement et peut être annulée dans les options de Marstek Modbus.",
         "data": {
-          "apply": "Appliquer l’interrogation à 1 seconde"
+          "apply": "Appliquer l’interrogation à 2 secondes"
         }
       },
       "grid_source": {

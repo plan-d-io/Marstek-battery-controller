@@ -26,7 +26,7 @@ def marstek_controller_device_info(hass: HomeAssistant, entry: ConfigEntry) -> D
     return DeviceInfo(
         identifiers={(const.DOMAIN, entry.entry_id)},
         name=entry.title or "Marstek Battery Controller",
-        manufacturer="plan-d-io",
-        model="Battery Controller",
+        manufacturer="plan-d.io",
+        model="Marstek Battery Controller",
         via_device=via,
     )

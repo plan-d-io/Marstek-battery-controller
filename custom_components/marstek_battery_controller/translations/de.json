@@ -38,9 +38,9 @@
       },
       "scan_interval_consent": {
         "title": "Batterieabfrage beschleunigen",
-        "description": "Die Marstek-Modbus-Integration fragt die Batterie derzeit alle {current} Sekunden ab. Für optimale Eigenverbrauchsregelung empfehlen wir {recommended} Sekunde. Die Änderung wirkt sofort und kann später in den Optionen von Marstek Modbus rückgängig gemacht werden.",
+        "description": "Die Marstek-Modbus-Integration fragt die Batterie derzeit alle {current} Sekunden ab. Für optimale Eigenverbrauchsregelung empfehlen wir {recommended} Sekunden. Die Änderung wirkt sofort und kann später in den Optionen von Marstek Modbus rückgängig gemacht werden.",
         "data": {
-          "apply": "Abfrage auf 1 Sekunde setzen"
+          "apply": "Abfrage auf 2 Sekunden setzen"
         }
       },
       "grid_source": {

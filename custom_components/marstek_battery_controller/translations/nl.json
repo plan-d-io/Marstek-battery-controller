@@ -38,9 +38,9 @@
       },
       "scan_interval_consent": {
         "title": "Batterijpolling versnellen",
-        "description": "De Marstek Modbus-integratie peilt de batterij momenteel elke {current} seconden. Voor betere zelfverbruikssturing raden we aan dit op {recommended} seconde te zetten. De wijziging wordt meteen toegepast en kan later in de opties van de Marstek Modbus-integratie worden teruggedraaid.",
+        "description": "De Marstek Modbus-integratie peilt de batterij momenteel elke {current} seconden. Voor betere zelfverbruikssturing raden we aan dit op {recommended} seconden te zetten. De wijziging wordt meteen toegepast en kan later in de opties van de Marstek Modbus-integratie worden teruggedraaid.",
         "data": {
-          "apply": "Nu peilen op 1 seconde toepassen"
+          "apply": "Nu peilen op 2 seconden toepassen"
         }
       },
       "grid_source": {

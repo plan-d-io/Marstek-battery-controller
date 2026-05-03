@@ -2,7 +2,7 @@
   "domain": "marstek_battery_controller",
   "name": "Marstek Battery Controller",
   "after_dependencies": [],
-  "codeowners": ["@TBD"],
+  "codeowners": ["@Epyon01P"],
   "config_flow": true,
   "dependencies": ["marstek_modbus"],
   "documentation": "https://github.com/plan-d-io/Marstek-battery-controller",

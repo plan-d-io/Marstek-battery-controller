@@ -35,7 +35,7 @@ You can use it outside Flanders too: turn off the capacity-tariff guard and run 
 
 Home Assistant does not allow official integrations to have a polling rate faster than **5 seconds**. As such, many digital-meter integrations only update every **5–10 seconds** or so. That is often too slow for smooth battery control: the controller reacts to load changes that are already seconds old, leading to overshoot and oscillations.
 
-This integration addresses the **battery** side by offering, during config flow, to set the `marstek_modbus` integration's **high-priority polling to 1 second** (within what Modbus and the inverter allow). I have extensively tested this on my setup, and have not encountered any issues with dropped commands.
+This integration addresses the **battery** side by offering, during config flow, to set the `marstek_modbus` integration's **high-priority polling to 2 seconds** — a balance between responsive control and keeping Modbus traffic light enough for the battery BMS. You can change this later in the `marstek_modbus` integration's options.
 
 For the **grid** side you have three practical options:
 
@@ -70,7 +70,7 @@ Copy the folder `custom_components/marstek_battery_controller/` into your Home A
 | Step | What it asks | What to choose |
 |------|--------------|----------------|
 | Marstek battery | Which Marstek Venus E to control | Pick the one detected via `marstek_modbus`, or enable manual entity setup if discovery doesn't work |
-| Speed up battery polling | Whether to set `marstek_modbus` to 1-second polling | Recommended: yes. The setting can be changed later in the `marstek_modbus` integration's options |
+| Speed up battery polling | Whether to set `marstek_modbus` to 2-second high-priority polling | Recommended: yes. The setting can be changed later in the `marstek_modbus` integration's options |
 | Grid power source | Where to read household grid power from | If you have a HomeWizard P1, pick that (recommended). Otherwise pick an existing power sensor or enter a HomeWizard IP manually |
 | Optional sensors | Two extra inputs for capacity tariff handling | The current quarter-hour average power sensor (typical name: peak demand, kwartiervermogen) and optionally a monthly peak sensor. Both optional — leave empty if you don't have them |
 | Initial parameters | Starting values for SoC limits, peak window time, etc. | Defaults are reasonable; everything is editable later via the device page |

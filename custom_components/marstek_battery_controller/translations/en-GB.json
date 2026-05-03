@@ -38,9 +38,9 @@
       },
       "scan_interval_consent": {
         "title": "Speed up battery polling",
-        "description": "The Marstek Modbus integration is currently polling the battery every {current} seconds. For best self-consumption performance, we recommend setting this to {recommended} second. The change is applied immediately and can be reverted later in the Marstek Modbus integration's options.",
+        "description": "The Marstek Modbus integration is currently polling the battery every {current} seconds. For best self-consumption performance, we recommend setting this to {recommended} seconds. The change is applied immediately and can be reverted later in the Marstek Modbus integration's options.",
         "data": {
-          "apply": "Apply 1-second polling now"
+          "apply": "Apply 2-second polling now"
         }
       },
       "grid_source": {

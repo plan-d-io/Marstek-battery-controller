@@ -447,7 +447,7 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
     async def async_step_scan_interval_consent(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Offer to set marstek_modbus high-priority polling to 1 s."""
+        """Offer to set marstek_modbus high-priority polling to the recommended interval (s)."""
         if self._use_manual or not self._picked_device_id:
             return await self.async_step_grid_source()
 
