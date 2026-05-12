@@ -163,8 +163,12 @@ RESTART_WRITE_GRACE_S: Final = 60
 # Sensor unavailability forcing Released (§16).
 SENSOR_UNAVAILABLE_RELEASE_S: Final = 60
 
-# Consecutive Modbus failures before ERROR + repair (§16).
+# Consecutive Modbus failures before circuit opens (§16); shared by tick writes and Released cleanup.
 MODBUS_FAILURE_ERROR_THRESHOLD: Final = 5
+# Full Modbus sequence (all service calls in one send/cleanup) must finish within this window.
+MODBUS_SEQUENCE_TIMEOUT_S: Final = 30
+# After threshold consecutive failures, skip Modbus until this cooldown elapses (no exponential backoff).
+MODBUS_CIRCUIT_COOLDOWN_S: Final = 180
 
 ATTR_OPTION: Final = "option"
 

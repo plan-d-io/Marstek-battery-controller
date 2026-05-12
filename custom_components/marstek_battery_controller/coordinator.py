@@ -117,7 +117,9 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "soc": None,
             "battery_ac": None,
         }
-        self._modbus_failures = 0
+        self._modbus_consecutive_failures = 0
+        self._modbus_breaker_until_mono: float | None = None
+        self._released_cleanup_task: asyncio.Task[None] | None = None
         self._write_grace_until: datetime | None = None
 
         # Must not shadow DataUpdateCoordinator._listeners (dict of entity update callbacks).
@@ -381,6 +383,13 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_shutdown(self) -> None:
         """Detach listeners."""
         self._cancel_tick()
+        if self._released_cleanup_task and not self._released_cleanup_task.done():
+            self._released_cleanup_task.cancel()
+            try:
+                await self._released_cleanup_task
+            except asyncio.CancelledError:
+                pass
+        self._released_cleanup_task = None
         for unsub in self._state_change_unsubs:
             unsub()
         self._state_change_unsubs.clear()
@@ -641,6 +650,53 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.target_setpoint = out.setpoint_w
         self.async_update_listeners()
 
+    def _modbus_breaker_blocks(self) -> bool:
+        """Return True if Modbus sequences must be skipped (cooldown active)."""
+        until = self._modbus_breaker_until_mono
+        if until is None:
+            return False
+        loop_ts = asyncio.get_running_loop().time()
+        if loop_ts >= until:
+            self._modbus_breaker_until_mono = None
+            return False
+        return True
+
+    def _record_modbus_sequence_success(self) -> None:
+        """Reset failure streak and close circuit after any successful full sequence."""
+        self._modbus_consecutive_failures = 0
+        self._modbus_breaker_until_mono = None
+        async_delete_issue(self.hass, const.DOMAIN, f"{const.DOMAIN}_{self.entry_id}_modbus")
+
+    def _record_modbus_sequence_failure(self, err: BaseException | None) -> None:
+        """Count one failed full Modbus sequence; trip shared breaker after threshold."""
+        self._modbus_consecutive_failures += 1
+        _LOGGER.warning(
+            "Modbus sequence failed (%s/%s): %s",
+            self._modbus_consecutive_failures,
+            const.MODBUS_FAILURE_ERROR_THRESHOLD,
+            err,
+        )
+        if self._modbus_consecutive_failures < const.MODBUS_FAILURE_ERROR_THRESHOLD:
+            return
+        self._modbus_consecutive_failures = 0
+        self._modbus_breaker_until_mono = (
+            asyncio.get_running_loop().time() + const.MODBUS_CIRCUIT_COOLDOWN_S
+        )
+        _LOGGER.error(
+            "Modbus circuit breaker open for %ss (no writes/cleanup until cooldown)",
+            const.MODBUS_CIRCUIT_COOLDOWN_S,
+        )
+        async_create_issue(
+            self.hass,
+            const.DOMAIN,
+            f"{const.DOMAIN}_{self.entry_id}_modbus",
+            breaks_invisibly=True,
+            is_fixable=False,
+            severity=IssueSeverity.ERROR,
+            translation_key="modbus_failures",
+            translation_placeholders={"count": str(const.MODBUS_FAILURE_ERROR_THRESHOLD)},
+        )
+
     async def _async_tick_writes(self) -> None:
         """Send Modbus if target differs from last sent."""
         if self._write_grace_until:
@@ -661,48 +717,92 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             return
 
-        try:
-            await self.writer.async_send_setpoint(self.target_setpoint)
-            self.last_sent_setpoint = self.target_setpoint
-            self._modbus_failures = 0
-            async_delete_issue(self.hass, const.DOMAIN, f"{const.DOMAIN}_{self.entry_id}_modbus")
-            _LOGGER.debug(
-                "Modbus write OK: target_setpoint=%s W",
-                self.target_setpoint,
-            )
-        except Exception as err:
-            self._modbus_failures += 1
-            _LOGGER.warning(
-                "Modbus write failed (%s consecutive): %s",
-                self._modbus_failures,
-                err,
-            )
-            if self._modbus_failures >= const.MODBUS_FAILURE_ERROR_THRESHOLD:
-                _LOGGER.error(
-                    "Modbus write failed %s times consecutively",
-                    self._modbus_failures,
-                )
-                async_create_issue(
-                    self.hass,
-                    const.DOMAIN,
-                    f"{const.DOMAIN}_{self.entry_id}_modbus",
-                    breaks_invisibly=True,
-                    is_fixable=False,
-                    severity=IssueSeverity.ERROR,
-                    translation_key="modbus_failures",
-                    translation_placeholders={"count": str(self._modbus_failures)},
-                )
+        if self._modbus_breaker_blocks():
+            return
 
-    async def async_run_released_cleanup(self) -> None:
-        """§6.1 cleanup when entering Released."""
-        _LOGGER.info("Running Released cleanup sequence")
         try:
-            await self.writer.async_cleanup_released_sequence()
+            await asyncio.wait_for(
+                self.writer.async_send_setpoint(self.target_setpoint),
+                timeout=const.MODBUS_SEQUENCE_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Modbus write timed out after %ss",
+                const.MODBUS_SEQUENCE_TIMEOUT_S,
+            )
+            self._record_modbus_sequence_failure(None)
+            return
+        except Exception as err:
+            self._record_modbus_sequence_failure(err)
+            return
+
+        self.last_sent_setpoint = self.target_setpoint
+        self._record_modbus_sequence_success()
+        _LOGGER.debug(
+            "Modbus write OK: target_setpoint=%s W",
+            self.target_setpoint,
+        )
+
+    async def async_schedule_released_cleanup(self) -> None:
+        """Cancel any in-flight Released cleanup and run cleanup when the circuit allows."""
+        if self._released_cleanup_task and not self._released_cleanup_task.done():
+            self._released_cleanup_task.cancel()
+            try:
+                await self._released_cleanup_task
+            except asyncio.CancelledError:
+                pass
+        self._released_cleanup_task = self.hass.async_create_task(
+            self._async_released_cleanup_when_able()
+        )
+
+    async def _async_released_cleanup_when_able(self) -> None:
+        """Wait out Modbus cooldown, then run full Released cleanup with timeout."""
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                until = self._modbus_breaker_until_mono
+                if until is None:
+                    break
+                now = loop.time()
+                if now >= until:
+                    self._modbus_breaker_until_mono = None
+                    break
+                await asyncio.sleep(min(1.0, max(0.05, until - now)))
+
+            if self._mode != const.MODE_RELEASED:
+                _LOGGER.debug("Released cleanup skipped: mode is %s", self._mode)
+                return
+
+            _LOGGER.info("Running Released cleanup sequence")
+            await asyncio.wait_for(
+                self.writer.async_cleanup_released_sequence(),
+                timeout=const.MODBUS_SEQUENCE_TIMEOUT_S,
+            )
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Released cleanup timed out after %ss",
+                const.MODBUS_SEQUENCE_TIMEOUT_S,
+            )
+            self._record_modbus_sequence_failure(None)
+            self.last_sent_setpoint = None
+            self.async_update_listeners()
+            return
         except Exception as err:
             _LOGGER.warning("Released cleanup failed: %s", err)
-            raise
+            self._record_modbus_sequence_failure(err)
+            self.last_sent_setpoint = None
+            self.async_update_listeners()
+            return
+
+        self._record_modbus_sequence_success()
         self.last_sent_setpoint = None
-        async_delete_issue(self.hass, const.DOMAIN, f"{const.DOMAIN}_{self.entry_id}_modbus")
+        self.async_update_listeners()
+
+    async def async_run_released_cleanup(self) -> None:
+        """Await Released cleanup (tests); UI uses async_schedule_released_cleanup."""
+        await self._async_released_cleanup_when_able()
 
     def effective_cap_w(self) -> float:
         """Expose §9.2 threshold for diagnostics."""
