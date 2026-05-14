@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import asyncio
-from datetime import datetime, time
+from datetime import datetime
+from datetime import time as time_type
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
@@ -19,9 +20,11 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 
-def _parse_wall_clock_time(raw: Any) -> time | None:
+def _parse_wall_clock_time(raw: Any) -> time_type | None:
     """Parse options stored as datetime.time, datetime, or 'HH:MM' / 'HH:MM:SS' strings."""
-    if isinstance(raw, time):
+    # Use time_type, not `time`: loading platform submodule `.time` overwrites the package
+    # module's global name `time` after async_forward_entry_setups.
+    if isinstance(raw, time_type):
         return raw.replace(tzinfo=None)
     if isinstance(raw, datetime):
         return raw.time().replace(tzinfo=None)
