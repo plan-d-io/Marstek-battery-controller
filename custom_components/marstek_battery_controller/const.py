@@ -75,6 +75,7 @@ REASON_BOOST_ACTIVE: Final = "boost_active"
 REASON_RESERVE_HELD: Final = "reserve_held"
 REASON_MANUAL_ACTIVE: Final = "manual_active"
 REASON_RELEASED: Final = "released"
+REASON_DIRECTION_COOLDOWN: Final = "direction_cooldown"
 
 REASON_CODE_OPTIONS: Final[tuple[str, ...]] = (
     REASON_NORMAL,
@@ -85,6 +86,18 @@ REASON_CODE_OPTIONS: Final[tuple[str, ...]] = (
     REASON_RESERVE_HELD,
     REASON_MANUAL_ACTIVE,
     REASON_RELEASED,
+    REASON_DIRECTION_COOLDOWN,
+)
+
+# Direction gate — limit charge ↔ discharge flips (self-consumption modes only).
+DIRECTION_COOLDOWN_WINDOW_S: Final = 30
+DIRECTION_COOLDOWN_MAX_FLIPS: Final = 2
+DIRECTION_GATE_MODES: Final[frozenset[str]] = frozenset(
+    {
+        MODE_SELF_CONSUMPTION,
+        MODE_SELF_CONSUMPTION_BOOST,
+        MODE_SELF_CONSUMPTION_RESERVE,
+    }
 )
 
 # Laadplanning sentinel when no grid charge is needed.

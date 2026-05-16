@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta
 import logging
 from typing import Any, Literal
@@ -15,6 +15,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from . import const
+from .direction_gate import DirectionGateState, evaluate_direction_gate
 from .calculator import (
     CalculatorInputs,
     CalculatorOutput,
@@ -120,6 +121,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._modbus_consecutive_failures = 0
         self._modbus_breaker_until_mono: float | None = None
         self._released_cleanup_task: asyncio.Task[None] | None = None
+        self._direction_gate = DirectionGateState()
         self._write_grace_until: datetime | None = None
 
         # Must not shadow DataUpdateCoordinator._listeners (dict of entity update callbacks).
@@ -631,7 +633,6 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         base_preview = compute_base(grid_smoothed, batt_smoothed)
         out = compute_setpoint(inp)
-        self.last_calc_output = out
         _LOGGER.debug(
             "setpoint: mode=%s grid=%.1f batt=%.1f base=%.1f -> out_w=%s state=%s reason=%s",
             self._mode,
@@ -644,10 +645,32 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         if out.setpoint_w is None:
+            self.last_calc_output = out
             self.async_update_listeners()
             return
 
-        self.target_setpoint = out.setpoint_w
+        gate = evaluate_direction_gate(
+            self._mode,
+            out.setpoint_w,
+            self.target_setpoint,
+            self._direction_gate,
+            asyncio.get_running_loop().time(),
+        )
+        if gate.apply:
+            self.last_calc_output = out
+            self.target_setpoint = out.setpoint_w
+        else:
+            self.last_calc_output = replace(
+                out,
+                reason_code=gate.reason_code or const.REASON_DIRECTION_COOLDOWN,
+            )
+            _LOGGER.debug(
+                "Direction gate closed: raw=%s W, target=%s W, flips_in_window=%s",
+                out.setpoint_w,
+                self.target_setpoint,
+                len(self._direction_gate.flip_times),
+            )
+
         self.async_update_listeners()
 
     def _modbus_breaker_blocks(self) -> bool:

@@ -196,7 +196,8 @@
           "boost_active": "Vorladung aktiv",
           "reserve_held": "Reserve gehalten",
           "manual_active": "Manueller Befehl aktiv",
-          "released": "Freigegeben"
+          "released": "Freigegeben",
+          "direction_cooldown": "Richtungswechsel begrenzt"
         }
       },
       "latest_start_charge": { "name": "Boost muss starten bis" },

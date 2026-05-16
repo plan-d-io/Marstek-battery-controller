@@ -196,7 +196,8 @@
           "boost_active": "Recharge boost",
           "reserve_held": "Réserve maintenue",
           "manual_active": "Commande manuelle active",
-          "released": "Relâché"
+          "released": "Relâché",
+          "direction_cooldown": "Changement de direction limité"
         }
       },
       "latest_start_charge": { "name": "Boost doit démarrer avant" },

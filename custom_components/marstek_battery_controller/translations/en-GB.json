@@ -196,7 +196,8 @@
           "boost_active": "Boost charging",
           "reserve_held": "Reserve held",
           "manual_active": "Manual command active",
-          "released": "Released"
+          "released": "Released",
+          "direction_cooldown": "Direction change limited"
         }
       },
       "latest_start_charge": { "name": "Boost must start by" },
