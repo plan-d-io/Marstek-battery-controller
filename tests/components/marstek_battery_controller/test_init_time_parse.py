@@ -35,3 +35,20 @@ def test_parse_invalid() -> None:
     assert _parse_wall_clock_time("") is None
     assert _parse_wall_clock_time("nope") is None
     assert _parse_wall_clock_time(123) is None
+
+
+def test_parse_survives_time_platform_shadowing() -> None:
+    """Loading the time platform shadows ``time`` on the package module."""
+    import sys
+    import types
+
+    pkg = sys.modules["custom_components.marstek_battery_controller"]
+    fake_time_platform = types.ModuleType(
+        "custom_components.marstek_battery_controller.time"
+    )
+    pkg.time = fake_time_platform
+    try:
+        assert _parse_wall_clock_time("18:00") == time(18, 0)
+        assert _parse_wall_clock_time(time(9, 30)) == time(9, 30)
+    finally:
+        del pkg.time
