@@ -18,11 +18,8 @@ from homeassistant.helpers.selector import SelectSelectorMode
 from . import const
 from .discovery import list_marstek_devices, resolve_roles_for_device
 from .homewizard_discovery import HomeWizardCandidate, list_homewizard_p1_candidates, probe_homewizard
-from .viperrnmc_options import (
-    apply_high_interval,
-    find_marstek_modbus_entry_for_device,
-    get_high_interval,
-)
+from .viperrnmc_options import find_marstek_modbus_entry_for_device
+from .viperrnmc_setup import apply_marstek_setup_plan, build_marstek_setup_plan
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +27,7 @@ STEP_ID_MANUAL = "manual_devices"
 STEP_ID_GRID = "grid"
 STEP_ID_OPTIONAL = "optional"
 STEP_ID_PARAMS = "parameters"
-STEP_ID_SCAN_INTERVAL_CONSENT = "scan_interval_consent"
+STEP_ID_MARSTEK_MODBUS_SETUP = "marstek_modbus_setup"
 STEP_ID_GRID_SOURCE = "grid_source"
 STEP_ID_HOMEWIZARD_PICK = "homewizard_pick"
 STEP_ID_HOMEWIZARD_MANUAL = "homewizard_manual"
@@ -297,6 +294,39 @@ def _param_schema_defaults(
     return vol.Schema(schema_dict)
 
 
+def _marstek_setup_description_placeholders(plan: Any) -> dict[str, str]:
+    """Build config step description placeholders from a setup plan."""
+    details: list[str] = []
+    if plan.needs_enable:
+        roles = ", ".join(plan.integration_disabled_roles)
+        count = len(plan.integration_disabled_roles)
+        details.append(
+            f"{count} required control entit{'y' if count == 1 else 'ies'} "
+            f"are disabled by default ({roles})"
+        )
+    if plan.needs_interval:
+        details.append(
+            f"High-priority polling is {plan.current_high_interval}s; "
+            f"we recommend {const.VIPER_HIGH_INTERVAL_RECOMMENDED}s"
+        )
+    user_note = ""
+    if plan.user_disabled_roles:
+        user_note = (
+            " Some entities were disabled manually and must be re-enabled "
+            f"in Settings: {', '.join(plan.user_disabled_roles)}."
+        )
+    return {
+        "setup_details": ". ".join(details),
+        "reload_note": (
+            " Applying selected changes reloads Marstek Modbus once "
+            "and may take 1–2 minutes."
+        ),
+        "user_disabled_note": user_note,
+        "current": str(plan.current_high_interval),
+        "recommended": str(const.VIPER_HIGH_INTERVAL_RECOMMENDED),
+    }
+
+
 class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
     """Handle UI configuration."""
 
@@ -312,7 +342,7 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
         self._homewizard_ip: str | None = None
         self._homewizard_candidates: list[HomeWizardCandidate] = []
         self._marstek_modbus_entry_id: str | None = None
-        self._scan_interval_offered: bool = False
+        self._marstek_setup_offered: bool = False
         self._cap_sensor: str | None = None
         self._monthly_sensor: str | None = None
 
@@ -368,15 +398,15 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
             self._picked_device_id = str(device_id)
             self._use_manual = False
             _LOGGER.info(
-                "%s discovery OK device_id=%s → scan-interval consent step",
+                "%s discovery OK device_id=%s → marstek_modbus setup step",
                 const.DOMAIN,
                 self._picked_device_id,
             )
             try:
-                return await self.async_step_scan_interval_consent()
+                return await self.async_step_marstek_modbus_setup()
             except Exception:
                 _LOGGER.exception(
-                    "%s scan/grid-source step crashed after device pick device_id=%s",
+                    "%s marstek_modbus setup step crashed after device pick device_id=%s",
                     const.DOMAIN,
                     device_id,
                 )
@@ -444,51 +474,86 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
 
         return self.async_show_form(step_id=STEP_ID_MANUAL, data_schema=schema)
 
-    async def async_step_scan_interval_consent(
+    async def async_step_marstek_modbus_setup(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Offer to set marstek_modbus high-priority polling to the recommended interval (s)."""
+        """Offer to enable required marstek_modbus entities and/or faster polling."""
         if self._use_manual or not self._picked_device_id:
             return await self.async_step_grid_source()
 
         entry = find_marstek_modbus_entry_for_device(self.hass, self._picked_device_id)
         if entry is None:
             _LOGGER.warning(
-                "Could not find marstek_modbus entry for device_id=%s; skipping consent step",
+                "Could not find marstek_modbus entry for device_id=%s; skipping setup step",
                 self._picked_device_id,
             )
             return await self.async_step_grid_source()
 
         self._marstek_modbus_entry_id = entry.entry_id
-        current = get_high_interval(entry)
-        if current <= const.VIPER_HIGH_INTERVAL_RECOMMENDED:
+        plan = build_marstek_setup_plan(self.hass, self._picked_device_id, entry)
+        if plan is None:
+            _LOGGER.warning(
+                "Marstek setup plan failed for device_id=%s; skipping setup step",
+                self._picked_device_id,
+            )
+            return await self.async_step_grid_source()
+
+        if not plan.needs_enable and not plan.needs_interval:
             return await self.async_step_grid_source()
 
         if user_input is not None:
-            self._scan_interval_offered = True
-            if user_input.get("apply"):
+            self._marstek_setup_offered = True
+            enable = (
+                bool(user_input.get("enable_entities"))
+                if plan.needs_enable
+                else False
+            )
+            apply_interval = (
+                bool(user_input.get("apply_interval"))
+                if plan.needs_interval
+                else False
+            )
+            if enable or apply_interval:
                 try:
-                    await apply_high_interval(
-                        self.hass, entry, const.VIPER_HIGH_INTERVAL_RECOMMENDED
+                    ok = await apply_marstek_setup_plan(
+                        self.hass,
+                        plan,
+                        enable_entities=enable,
+                        apply_interval=apply_interval,
                     )
+                    if not ok:
+                        _LOGGER.warning(
+                            "Marstek entities not all live after reload for device_id=%s",
+                            self._picked_device_id,
+                        )
                 except Exception:
                     _LOGGER.exception(
-                        "Failed to update/reload marstek_modbus high interval for entry_id=%s",
+                        "Failed to apply marstek_modbus setup for entry_id=%s",
                         entry.entry_id,
                     )
             return await self.async_step_grid_source()
 
-        schema = vol.Schema(
-            {vol.Required("apply", default=True): selector.BooleanSelector()}
-        )
+        schema_dict: dict[Any, Any] = {}
+        if plan.needs_enable:
+            schema_dict[
+                vol.Required("enable_entities", default=True)
+            ] = selector.BooleanSelector()
+        if plan.needs_interval:
+            schema_dict[
+                vol.Required("apply_interval", default=True)
+            ] = selector.BooleanSelector()
+
         return self.async_show_form(
-            step_id=STEP_ID_SCAN_INTERVAL_CONSENT,
-            data_schema=schema,
-            description_placeholders={
-                "current": str(current),
-                "recommended": str(const.VIPER_HIGH_INTERVAL_RECOMMENDED),
-            },
+            step_id=STEP_ID_MARSTEK_MODBUS_SETUP,
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders=_marstek_setup_description_placeholders(plan),
         )
+
+    async def async_step_scan_interval_consent(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Deprecated alias — redirects to combined marstek_modbus setup step."""
+        return await self.async_step_marstek_modbus_setup(user_input)
 
     async def async_step_grid_source(
         self, user_input: dict[str, Any] | None = None

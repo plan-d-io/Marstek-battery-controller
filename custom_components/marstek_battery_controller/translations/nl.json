@@ -36,11 +36,12 @@
           "set_discharge_power_entity": "Ontlaadvermogen nummer"
         }
       },
-      "scan_interval_consent": {
-        "title": "Batterijpolling versnellen",
-        "description": "De Marstek Modbus-integratie peilt de batterij momenteel elke {current} seconden. Voor betere zelfverbruikssturing raden we aan dit op {recommended} seconden te zetten. De wijziging wordt meteen toegepast en kan later in de opties van de Marstek Modbus-integratie worden teruggedraaid.",
+      "marstek_modbus_setup": {
+        "title": "Marstek Modbus voorbereiden",
+        "description": "Battery Controller heeft Marstek Modbus nodig voor externe sturing. {setup_details}.{reload_note}{user_disabled_note}",
         "data": {
-          "apply": "Nu peilen op 2 seconden toepassen"
+          "enable_entities": "Vereiste bedieningsentiteiten inschakelen",
+          "apply_interval": "Polling op {recommended} seconden zetten"
         }
       },
       "grid_source": {

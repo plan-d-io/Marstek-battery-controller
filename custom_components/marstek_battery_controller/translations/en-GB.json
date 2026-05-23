@@ -36,11 +36,12 @@
           "set_discharge_power_entity": "Set discharge power number"
         }
       },
-      "scan_interval_consent": {
-        "title": "Speed up battery polling",
-        "description": "The Marstek Modbus integration is currently polling the battery every {current} seconds. For best self-consumption performance, we recommend setting this to {recommended} seconds. The change is applied immediately and can be reverted later in the Marstek Modbus integration's options.",
+      "marstek_modbus_setup": {
+        "title": "Prepare Marstek Modbus",
+        "description": "Battery Controller needs Marstek Modbus configured for external control. {setup_details}.{reload_note}{user_disabled_note}",
         "data": {
-          "apply": "Apply 2-second polling now"
+          "enable_entities": "Enable required control entities",
+          "apply_interval": "Set high-priority polling to {recommended} seconds"
         }
       },
       "grid_source": {

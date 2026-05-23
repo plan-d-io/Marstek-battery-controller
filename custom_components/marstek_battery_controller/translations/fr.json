@@ -36,11 +36,12 @@
           "set_discharge_power_entity": "Réglage puissance décharge"
         }
       },
-      "scan_interval_consent": {
-        "title": "Accélérer l’interrogation batterie",
-        "description": "L’intégration Marstek Modbus interroge actuellement la batterie toutes les {current} secondes. Pour une meilleure autoconsommation, nous recommandons {recommended} secondes. La modification est appliquée immédiatement et peut être annulée dans les options de Marstek Modbus.",
+      "marstek_modbus_setup": {
+        "title": "Préparer Marstek Modbus",
+        "description": "Battery Controller nécessite Marstek Modbus pour le contrôle externe. {setup_details}.{reload_note}{user_disabled_note}",
         "data": {
-          "apply": "Appliquer l’interrogation à 2 secondes"
+          "enable_entities": "Activer les entités de commande requises",
+          "apply_interval": "Interrogation prioritaire à {recommended} secondes"
         }
       },
       "grid_source": {

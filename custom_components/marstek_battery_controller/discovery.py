@@ -50,10 +50,15 @@ def list_marstek_devices(hass: HomeAssistant) -> list[tuple[str, str]]:
 
 
 def resolve_roles_for_device(hass: HomeAssistant, device_id: str) -> ResolvedEntities | None:
-    """Map unique_id suffixes to entity_ids for one device."""
+    """Map unique_id suffixes to entity_ids for one device.
+
+    Includes disabled registry entries so default-off ViperRNMC controls are found.
+    """
     ent_reg = er.async_get(hass)
     roles: dict[str, str] = {}
-    for entity_entry in er.async_entries_for_device(ent_reg, device_id):
+    for entity_entry in er.async_entries_for_device(
+        ent_reg, device_id, include_disabled_entities=True
+    ):
         uid_raw = entity_entry.unique_id
         try:
             uid = "" if uid_raw is None else str(uid_raw)
