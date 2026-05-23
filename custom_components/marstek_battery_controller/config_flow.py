@@ -19,7 +19,11 @@ from . import const
 from .discovery import list_marstek_devices, resolve_roles_for_device
 from .homewizard_discovery import HomeWizardCandidate, list_homewizard_p1_candidates, probe_homewizard
 from .viperrnmc_options import find_marstek_modbus_entry_for_device
-from .viperrnmc_setup import apply_marstek_setup_plan, build_marstek_setup_plan
+from .viperrnmc_setup import (
+    apply_marstek_setup_plan,
+    async_build_marstek_setup_description_placeholders,
+    build_marstek_setup_plan,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -294,39 +298,6 @@ def _param_schema_defaults(
     return vol.Schema(schema_dict)
 
 
-def _marstek_setup_description_placeholders(plan: Any) -> dict[str, str]:
-    """Build config step description placeholders from a setup plan."""
-    details: list[str] = []
-    if plan.needs_enable:
-        roles = ", ".join(plan.integration_disabled_roles)
-        count = len(plan.integration_disabled_roles)
-        details.append(
-            f"{count} required control entit{'y' if count == 1 else 'ies'} "
-            f"are disabled by default ({roles})"
-        )
-    if plan.needs_interval:
-        details.append(
-            f"High-priority polling is {plan.current_high_interval}s; "
-            f"we recommend {const.VIPER_HIGH_INTERVAL_RECOMMENDED}s"
-        )
-    user_note = ""
-    if plan.user_disabled_roles:
-        user_note = (
-            " Some entities were disabled manually and must be re-enabled "
-            f"in Settings: {', '.join(plan.user_disabled_roles)}."
-        )
-    return {
-        "setup_details": ". ".join(details),
-        "reload_note": (
-            " Applying selected changes reloads Marstek Modbus once "
-            "and may take 1–2 minutes."
-        ),
-        "user_disabled_note": user_note,
-        "current": str(plan.current_high_interval),
-        "recommended": str(const.VIPER_HIGH_INTERVAL_RECOMMENDED),
-    }
-
-
 class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
     """Handle UI configuration."""
 
@@ -546,7 +517,9 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
         return self.async_show_form(
             step_id=STEP_ID_MARSTEK_MODBUS_SETUP,
             data_schema=vol.Schema(schema_dict),
-            description_placeholders=_marstek_setup_description_placeholders(plan),
+            description_placeholders=await async_build_marstek_setup_description_placeholders(
+                self.hass, plan
+            ),
         )
 
     async def async_step_scan_interval_consent(

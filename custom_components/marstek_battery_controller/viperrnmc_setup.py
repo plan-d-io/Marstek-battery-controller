@@ -10,9 +10,11 @@ from time import monotonic
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.translation import async_get_translations
 
 from . import const
 from .discovery import ResolvedEntities, resolve_roles_for_device
+from .marstek_setup_i18n import build_marstek_setup_description_placeholders
 from .viperrnmc_options import find_marstek_modbus_entry_for_device, get_high_interval
 
 _LOGGER = logging.getLogger(__name__)
@@ -162,3 +164,17 @@ async def apply_marstek_setup_plan(
         return await wait_for_entities_live(hass, plan.required_entity_ids)
 
     return True
+
+
+async def async_build_marstek_setup_description_placeholders(
+    hass: HomeAssistant,
+    plan: MarstekSetupPlan,
+) -> dict[str, str]:
+    """Load config-flow translations and build description placeholders."""
+    translations = await async_get_translations(
+        hass,
+        hass.config.language,
+        "config",
+        integrations=[const.DOMAIN],
+    )
+    return build_marstek_setup_description_placeholders(plan, translations)

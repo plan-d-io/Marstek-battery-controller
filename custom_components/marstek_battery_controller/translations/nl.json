@@ -38,7 +38,12 @@
       },
       "marstek_modbus_setup": {
         "title": "Marstek Modbus voorbereiden",
-        "description": "Battery Controller heeft Marstek Modbus nodig voor externe sturing. {setup_details}.{reload_note}{user_disabled_note}",
+        "description": "De batterijcontroller heeft Marstek Modbus nodig voor externe sturing. {setup_details}.{reload_note}{user_disabled_note}",
+        "description_enable_one": "1 vereiste bedieningsentiteit is standaard uitgeschakeld ({roles})",
+        "description_enable_many": "{count} vereiste bedieningsentiteiten zijn standaard uitgeschakeld ({roles})",
+        "description_interval": "Polling met hoge prioriteit staat op {current} s; we raden {recommended} s aan",
+        "description_reload": " Het toepassen van de geselecteerde wijzigingen herlaadt Marstek Modbus één keer en kan 1–2 minuten duren",
+        "description_user_disabled": " Sommige entiteiten zijn handmatig uitgeschakeld en moeten opnieuw worden ingeschakeld via Instellingen: {roles}",
         "data": {
           "enable_entities": "Vereiste bedieningsentiteiten inschakelen",
           "apply_interval": "Polling op {recommended} seconden zetten"

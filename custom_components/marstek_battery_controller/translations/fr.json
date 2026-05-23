@@ -38,7 +38,12 @@
       },
       "marstek_modbus_setup": {
         "title": "Préparer Marstek Modbus",
-        "description": "Battery Controller nécessite Marstek Modbus pour le contrôle externe. {setup_details}.{reload_note}{user_disabled_note}",
+        "description": "Le contrôleur de batterie nécessite Marstek Modbus pour le contrôle externe. {setup_details}.{reload_note}{user_disabled_note}",
+        "description_enable_one": "1 entité de commande requise est désactivée par défaut ({roles})",
+        "description_enable_many": "{count} entités de commande requises sont désactivées par défaut ({roles})",
+        "description_interval": "L'interrogation prioritaire est de {current} s ; nous recommandons {recommended} s",
+        "description_reload": " L'application des modifications sélectionnées recharge Marstek Modbus une fois et peut prendre 1 à 2 minutes",
+        "description_user_disabled": " Certaines entités ont été désactivées manuellement et doivent être réactivées dans Paramètres : {roles}",
         "data": {
           "enable_entities": "Activer les entités de commande requises",
           "apply_interval": "Interrogation prioritaire à {recommended} secondes"
