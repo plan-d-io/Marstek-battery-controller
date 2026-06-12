@@ -36,11 +36,17 @@
           "set_discharge_power_entity": "Set discharge power number"
         }
       },
-      "scan_interval_consent": {
-        "title": "Speed up battery polling",
-        "description": "The Marstek Modbus integration is currently polling the battery every {current} seconds. For best self-consumption performance, we recommend setting this to {recommended} seconds. The change is applied immediately and can be reverted later in the Marstek Modbus integration's options.",
+      "marstek_modbus_setup": {
+        "title": "Prepare Marstek Modbus",
+        "description": "Battery Controller needs Marstek Modbus configured for external control. {setup_details}.{reload_note}{user_disabled_note}",
+        "description_enable_one": "1 required control entity is disabled by default ({roles})",
+        "description_enable_many": "{count} required control entities are disabled by default ({roles})",
+        "description_interval": "High-priority polling is {current}s; we recommend {recommended}s",
+        "description_reload": " Applying selected changes reloads Marstek Modbus once and may take 1–2 minutes",
+        "description_user_disabled": " Some entities were disabled manually and must be re-enabled in Settings: {roles}",
         "data": {
-          "apply": "Apply 2-second polling now"
+          "enable_entities": "Enable required control entities",
+          "apply_interval": "Set high-priority polling to {recommended} seconds"
         }
       },
       "grid_source": {
@@ -196,7 +202,8 @@
           "boost_active": "Boost charging",
           "reserve_held": "Reserve held",
           "manual_active": "Manual command active",
-          "released": "Released"
+          "released": "Released",
+          "direction_cooldown": "Direction change limited"
         }
       },
       "latest_start_charge": { "name": "Boost must start by" },

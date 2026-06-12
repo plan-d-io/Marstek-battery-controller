@@ -36,11 +36,17 @@
           "set_discharge_power_entity": "Entladeleistung einstellen"
         }
       },
-      "scan_interval_consent": {
-        "title": "Batterieabfrage beschleunigen",
-        "description": "Die Marstek-Modbus-Integration fragt die Batterie derzeit alle {current} Sekunden ab. Für optimale Eigenverbrauchsregelung empfehlen wir {recommended} Sekunden. Die Änderung wirkt sofort und kann später in den Optionen von Marstek Modbus rückgängig gemacht werden.",
+      "marstek_modbus_setup": {
+        "title": "Marstek Modbus vorbereiten",
+        "description": "Der Batteriecontroller benötigt Marstek Modbus für externe Steuerung. {setup_details}.{reload_note}{user_disabled_note}",
+        "description_enable_one": "1 erforderliche Steuerentität ist standardmäßig deaktiviert ({roles})",
+        "description_enable_many": "{count} erforderliche Steuerentitäten sind standardmäßig deaktiviert ({roles})",
+        "description_interval": "Abfrage mit hoher Priorität liegt bei {current} s; wir empfehlen {recommended} s",
+        "description_reload": " Das Anwenden der ausgewählten Änderungen lädt Marstek Modbus einmal neu und kann 1–2 Minuten dauern",
+        "description_user_disabled": " Einige Entitäten wurden manuell deaktiviert und müssen unter Einstellungen wieder aktiviert werden: {roles}",
         "data": {
-          "apply": "Abfrage auf 2 Sekunden setzen"
+          "enable_entities": "Erforderliche Steuerentitäten aktivieren",
+          "apply_interval": "Hohe Priorität auf {recommended} Sekunden setzen"
         }
       },
       "grid_source": {
@@ -196,7 +202,8 @@
           "boost_active": "Vorladung aktiv",
           "reserve_held": "Reserve gehalten",
           "manual_active": "Manueller Befehl aktiv",
-          "released": "Freigegeben"
+          "released": "Freigegeben",
+          "direction_cooldown": "Richtungswechsel begrenzt"
         }
       },
       "latest_start_charge": { "name": "Boost muss starten bis" },

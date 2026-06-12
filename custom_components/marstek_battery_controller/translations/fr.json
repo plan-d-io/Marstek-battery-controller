@@ -36,11 +36,17 @@
           "set_discharge_power_entity": "Réglage puissance décharge"
         }
       },
-      "scan_interval_consent": {
-        "title": "Accélérer l’interrogation batterie",
-        "description": "L’intégration Marstek Modbus interroge actuellement la batterie toutes les {current} secondes. Pour une meilleure autoconsommation, nous recommandons {recommended} secondes. La modification est appliquée immédiatement et peut être annulée dans les options de Marstek Modbus.",
+      "marstek_modbus_setup": {
+        "title": "Préparer Marstek Modbus",
+        "description": "Le contrôleur de batterie nécessite Marstek Modbus pour le contrôle externe. {setup_details}.{reload_note}{user_disabled_note}",
+        "description_enable_one": "1 entité de commande requise est désactivée par défaut ({roles})",
+        "description_enable_many": "{count} entités de commande requises sont désactivées par défaut ({roles})",
+        "description_interval": "L'interrogation prioritaire est de {current} s ; nous recommandons {recommended} s",
+        "description_reload": " L'application des modifications sélectionnées recharge Marstek Modbus une fois et peut prendre 1 à 2 minutes",
+        "description_user_disabled": " Certaines entités ont été désactivées manuellement et doivent être réactivées dans Paramètres : {roles}",
         "data": {
-          "apply": "Appliquer l’interrogation à 2 secondes"
+          "enable_entities": "Activer les entités de commande requises",
+          "apply_interval": "Interrogation prioritaire à {recommended} secondes"
         }
       },
       "grid_source": {
@@ -196,7 +202,8 @@
           "boost_active": "Recharge boost",
           "reserve_held": "Réserve maintenue",
           "manual_active": "Commande manuelle active",
-          "released": "Relâché"
+          "released": "Relâché",
+          "direction_cooldown": "Changement de direction limité"
         }
       },
       "latest_start_charge": { "name": "Boost doit démarrer avant" },
