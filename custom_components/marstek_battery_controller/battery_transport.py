@@ -10,6 +10,7 @@ cancellation is re-raised.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -46,12 +47,18 @@ async def deliver_command(
     pd_state: PDState | None = None,
     safety: bool = False,
     reassert: bool = False,
+    clock: Callable[[], float] | None = None,
 ) -> DeliveryResult:
     """Send one command, or queue it behind the write already in flight.
 
     Cancellation after the external call has started leaves delivery uncertain
     and does not mark the command accepted. The caller can then send an
     explicit safety zero or adopt a read-back through ``reconcile_reported``.
+
+    Settling starts when the transport call returns, not when it was issued.
+    Pass ``clock`` to sample monotonic time after the await. ``now_mono`` is
+    the completion time only when no clock is injected, which matches an
+    instantaneous test double.
     """
     decision = ledger.submit(command_w, safety=safety, reassert=reassert)
     if decision.send_w is None:
@@ -78,7 +85,8 @@ async def deliver_command(
             uncertain=ledger.delivery_uncertain,
         )
 
-    accepted = ledger.succeed(now_mono, pd_state)
+    completed_mono = float(clock()) if clock is not None else float(now_mono)
+    accepted = ledger.succeed(completed_mono, pd_state)
     return DeliveryResult(
         accepted=True,
         sent_w=accepted,

@@ -54,6 +54,22 @@ def delivery_threshold_w(command_w: int) -> float:
     return max(IDLE_MEASURED_W, DELIVERY_FRACTION * abs(float(command_w)))
 
 
+def snap_noise_floor_command(command_w: int) -> int:
+    """Return zero for a nonzero command inside the 25 W delivery floor.
+
+    Delivery of a nonzero command requires at least 25 W of measured power in
+    the commanded direction. A request of 1–24 W, positive or negative, can
+    never pass that check, so leaving it in force mode would count as
+    non-delivery forever. Marstek force-charge and force-discharge accept any
+    nonzero wattage; there is no protocol minimum to round up to. Commands
+    below the floor are therefore idle.
+    """
+    command = int(command_w)
+    if command != 0 and abs(command) < IDLE_MEASURED_W:
+        return 0
+    return command
+
+
 def delivering_command(command_w: int, measured_power_w: float) -> bool:
     """Whether measured power is far enough in the commanded direction.
 
@@ -94,9 +110,10 @@ def evaluate_non_delivery(
 
     The same battery publication — by id or by monotonic source time — counts
     once. Calls with neither identity do not count. Settling time and stale
-    measurements do not count and do not erase progress.
+    measurements do not count and do not erase progress. A command of 1–24 W
+    in either direction is inside the noise floor and is idle, not a shortfall.
     """
-    if accepted_command_w == 0:
+    if abs(int(accepted_command_w)) < IDLE_MEASURED_W:
         _reset(state)
         state.last_checked_command_w = 0
         return NonDeliveryResult(reanchor=False, measured_w=None, shortfall_w=0.0)

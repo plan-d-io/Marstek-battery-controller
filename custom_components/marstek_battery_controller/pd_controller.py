@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from .const import DEFAULT_MAX_BATTERY_POWER
+from .non_delivery import snap_noise_floor_command
 from .publications import PublicationTracker
 
 # Nominal period the proportional gain and ramp were tuned against.
@@ -232,8 +233,9 @@ def reanchor_pd_state(state: PDState, measured_power_w: float) -> None:
     """Move the internal request to measured power after sustained non-delivery.
 
     This does not accept the measurement and does not touch the ledger.
+    A measurement inside the 25 W noise floor becomes an idle request.
     """
-    measured = int(round(measured_power_w))
+    measured = snap_noise_floor_command(int(round(measured_power_w)))
     state.previous_error = 0.0
     state.derivative_filtered = 0.0
     state.suppress_derivative_once = True
@@ -293,7 +295,7 @@ def _read_only_result(
 ) -> PDStepResult:
     """Return a proposal without writing controller memory."""
     filtered = state.grid_filtered if state.grid_filtered is not None else float(grid_raw_w)
-    limited, clamped = _clamp_command(float(proposed), params)
+    limited, clamped = _clamp_command(float(snap_noise_floor_command(proposed)), params)
     return PDStepResult(
         proposed_command_w=limited,
         filtered_grid_w=filtered,
@@ -465,9 +467,11 @@ def pd_step(
     in_deadband = abs(error) <= deadband
     p_scale = p_dt / NOMINAL_CYCLE_S
     if params.kp > 0:
-        # Incremental P behaves like an integrator. Cap it so a slow sample
-        # cannot apply an open-loop gain above 1.
-        p_scale = min(p_scale, max(1.0, 1.0 / params.kp))
+        # p_term = kp * error * p_scale. Keep kp * p_scale <= 1 so one sample
+        # cannot apply an open-loop gain above 1, including when kp itself is
+        # greater than 1. The cap is 1/kp, not max(1, 1/kp): the latter lets
+        # kp > 1 through at a gain of kp.
+        p_scale = min(p_scale, 1.0 / params.kp)
 
     p_term = 0.0
     d_term = 0.0
@@ -535,6 +539,10 @@ def pd_step(
     proposed, clamped = _clamp_command(float(proposed), params)
     if clamped and reason is None:
         reason = "pd_clamped"
+    floored = snap_noise_floor_command(proposed)
+    if floored != proposed:
+        proposed = floored
+        reason = "pd_noise_floor"
 
     state.zero_cross_holding = zero_hold
     state.requested_w = proposed

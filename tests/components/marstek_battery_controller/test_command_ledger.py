@@ -348,3 +348,76 @@ def test_reported_readback_clears_uncertainty() -> None:
     assert ledger.uncertain_command_w is None
     assert state.last_direction == 1
     assert ledger.in_flight_w is None
+
+
+def test_readback_during_an_awaited_write_does_not_drop_the_in_flight_slot() -> None:
+    ledger = CommandLedger(accepted_w=100)
+    state = PDState()
+    transport = _HangingTransport()
+
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            deliver_command(transport, ledger, 350, 4.0, pd_state=state)
+        )
+        await transport.started.wait()
+        assert ledger.in_flight_w == 350
+        ledger.reconcile_reported(80, state)
+        assert ledger.in_flight_w == 350
+        assert ledger.accepted_w == 100
+        assert state.last_direction == 0
+        transport.hold.set()
+        result = await task
+        assert result.accepted
+        assert result.sent_w == 350
+        assert ledger.accepted_w == 350
+        assert ledger.in_flight_w is None
+        assert ledger.last_success_mono == 4.0
+        assert state.last_direction == 1
+
+    asyncio.run(scenario())
+
+
+def test_settling_starts_when_the_transport_call_completes() -> None:
+    ledger = CommandLedger()
+    state = PDState()
+    mono = {"now": 10.0}
+
+    class _SlowTransport:
+        async def async_send_command(self, command_w: int) -> None:
+            mono["now"] = 15.0
+
+        async def async_release(self) -> None:
+            return None
+
+    result = asyncio.run(
+        deliver_command(
+            _SlowTransport(),
+            ledger,
+            400,
+            10.0,
+            pd_state=state,
+            clock=lambda: mono["now"],
+        )
+    )
+    assert result.accepted
+    assert ledger.last_success_mono == 15.0
+    waiting = decide_actuator_write(
+        requested_w=400,
+        reported_command_w=400,
+        measured_power_w=0.0,
+        measured_fresh=True,
+        now_mono=17.0,
+        last_change_mono=ledger.last_success_mono,
+        actuator_latency_s=3.0,
+    )
+    assert waiting.action == "wait"
+    consumed = decide_actuator_write(
+        requested_w=400,
+        reported_command_w=400,
+        measured_power_w=0.0,
+        measured_fresh=True,
+        now_mono=17.0,
+        last_change_mono=10.0,
+        actuator_latency_s=3.0,
+    )
+    assert consumed.action == "reassert"

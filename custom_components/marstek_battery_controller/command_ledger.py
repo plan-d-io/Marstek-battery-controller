@@ -67,6 +67,10 @@ class CommandLedger:
         self.uncertain_command_w: int | None = None
         self.anchored_from_measurement: bool = False
         self.non_delivery = NonDeliveryState()
+        # Readback observed while a write is awaiting completion. It must not
+        # clear ``in_flight_w``. The flight that finishes successfully is newer
+        # than this sample and drops it.
+        self._deferred_report: tuple[int, PDState | None] | None = None
 
     def submit(
         self,
@@ -102,6 +106,7 @@ class CommandLedger:
         """Record that the in-flight command was accepted by the transport."""
         if self.in_flight_w is None:
             raise RuntimeError("no in-flight command to accept")
+        self._deferred_report = None
         sent = self.in_flight_w
         self.accepted_w = sent
         self.in_flight_w = None
@@ -119,10 +124,18 @@ class CommandLedger:
         return sent
 
     def fail(self) -> None:
-        """The transport refused the in-flight command. Accepted state stays."""
+        """The transport refused the in-flight command.
+
+        The refused command is not accepted. A readback that arrived during
+        the await is adopted, because that write did not land.
+        """
         if self.in_flight_w is None:
             raise RuntimeError("no in-flight command to fail")
         self.in_flight_w = None
+        deferred = self._deferred_report
+        self._deferred_report = None
+        if deferred is not None:
+            self._adopt_reported(deferred[0], deferred[1])
 
     def note_cancelled(self, command_w: int, *, call_started: bool) -> None:
         """Free the in-flight slot after cancellation without accepting it.
@@ -133,6 +146,7 @@ class CommandLedger:
         stored as accepted.
         """
         self.in_flight_w = None
+        self._deferred_report = None
         if call_started:
             self.delivery_uncertain = True
             self.uncertain_command_w = int(command_w)
@@ -152,9 +166,23 @@ class CommandLedger:
         reported_command_w: int,
         pd_state: PDState | None = None,
     ) -> None:
-        """Adopt a command read back from the device and clear uncertainty."""
+        """Adopt a command read back from the device and clear uncertainty.
+
+        A readback that arrives while a transport call is still awaiting
+        completion is stored and does not touch the in-flight slot. Otherwise
+        ``succeed`` would find nothing to accept. A successful completion is
+        newer than that readback and drops it. A failed completion adopts it,
+        because the write did not land.
+        """
+        reported = int(reported_command_w)
+        if self.in_flight_w is not None:
+            self._deferred_report = (reported, pd_state)
+            return
+        self._adopt_reported(reported, pd_state)
+
+    def _adopt_reported(self, reported_command_w: int, pd_state: PDState | None) -> None:
+        """Store a device readback. Does not touch an in-flight write."""
         self.accepted_w = int(reported_command_w)
-        self.in_flight_w = None
         self.delivery_uncertain = False
         self.uncertain_command_w = None
         if pd_state is not None:

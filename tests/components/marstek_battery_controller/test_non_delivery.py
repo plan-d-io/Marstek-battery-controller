@@ -205,3 +205,47 @@ def test_reanchor_does_not_accept_measured_power() -> None:
     assert stepped.proposed_command_w == 40
     assert stepped.d_term == 0.0
     assert ledger.accepted_w == 1000
+
+
+def test_commands_inside_the_noise_floor_are_not_non_delivery() -> None:
+    kwargs = dict(
+        measured_power_w=0.0,
+        measured_fresh=True,
+        last_write_mono=0.0,
+        actuator_latency_s=1.0,
+        consecutive_required=3,
+        fallback_timeout_s=60.0,
+    )
+    for sign in (1, -1):
+        for watts in range(1, 25):
+            state = NonDeliveryState()
+            command = sign * watts
+            for index in range(4):
+                result = evaluate_non_delivery(
+                    state,
+                    accepted_command_w=command,
+                    now_mono=2.0 + index,
+                    publication_id=f"{command}-{index}",
+                    **kwargs,
+                )
+                assert result.reanchor is False
+            assert state.shortfall_count == 0
+
+    counted = NonDeliveryState()
+    evaluate_non_delivery(
+        counted,
+        accepted_command_w=25,
+        now_mono=2.0,
+        publication_id="at-floor",
+        **kwargs,
+    )
+    assert counted.shortfall_count == 1
+    negative = NonDeliveryState()
+    evaluate_non_delivery(
+        negative,
+        accepted_command_w=-25,
+        now_mono=2.0,
+        publication_id="at-floor-neg",
+        **kwargs,
+    )
+    assert negative.shortfall_count == 1

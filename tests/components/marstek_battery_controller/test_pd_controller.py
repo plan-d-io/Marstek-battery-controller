@@ -705,3 +705,71 @@ def test_reset_clears_publication_and_hold_memory() -> None:
 def test_min_interval_default_is_independent_of_the_five_second_entity() -> None:
     assert DEFAULT_MIN_INTERVAL_S == 1.0
     assert PDParams().min_interval_s == 1.0
+
+
+def test_sub_floor_requests_snap_to_zero() -> None:
+    """1–24 W cannot satisfy the 25 W delivery floor, so the request is idle."""
+    params = PDParams(kd=0.0, deadband_w=40.0, direction_hysteresis_w=0.0)
+    for watts in range(1, 25):
+        for sign in (1, -1):
+            state = PDState()
+            state.requested_w = sign * watts
+            result = pd_step(
+                state,
+                params,
+                grid_raw_w=0.0,
+                now_mono=0.0,
+                source_mono=0.0,
+                publication_id=f"floor-{sign}-{watts}",
+            )
+            assert result.proposed_command_w == 0
+            assert result.reason_code == "pd_noise_floor"
+            assert state.requested_w == 0
+
+    for kept in (25, -25):
+        state = PDState()
+        state.requested_w = kept
+        result = pd_step(
+            state,
+            params,
+            grid_raw_w=0.0,
+            now_mono=0.0,
+            source_mono=0.0,
+            publication_id=f"keep-{kept}",
+        )
+        assert result.proposed_command_w == kept
+        assert state.requested_w == kept
+
+
+def test_proportional_open_loop_gain_stays_at_most_one() -> None:
+    """kp * p_scale stays at most 1, including when kp itself is above 1."""
+
+    def p_term(kp: float, dt: float) -> float:
+        state = PDState()
+        state.last_integrate_mono = 0.0
+        params = PDParams(
+            kp=kp,
+            kd=0.0,
+            deadband_w=0.0,
+            direction_hysteresis_w=0.0,
+            max_power_change_w=1_000_000.0,
+            max_battery_power_w=1_000_000.0,
+        )
+        result = pd_step(
+            state,
+            params,
+            grid_raw_w=1000.0,
+            now_mono=dt,
+            source_mono=dt,
+            publication_id=f"kp-{kp}-{dt}",
+        )
+        return result.p_term
+
+    # A 10 s gap at kp = 1 used to be eligible for scale 5. Gain stays 1.
+    assert p_term(1.0, 10.0) == pytest.approx(1000.0)
+    # kp = 2 must not apply a gain of 2. The old cap max(1, 1/kp) did.
+    assert p_term(2.0, 10.0) == pytest.approx(1000.0)
+    # A short step already below 1/kp is left alone: 2 * 1000 * (0.4 / 2) = 400.
+    assert p_term(2.0, 0.4) == pytest.approx(400.0)
+    # Nominal step at the kp = 1 boundary still applies the full error.
+    assert p_term(1.0, 2.0) == pytest.approx(1000.0)
