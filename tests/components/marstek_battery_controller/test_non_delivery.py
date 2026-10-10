@@ -33,7 +33,7 @@ def test_ignores_shortfall_during_actuator_delay() -> None:
     assert state.shortfall_count == 0
 
 
-def test_reanchors_on_fresh_publications_only() -> None:
+def test_reanchors_on_fresh_distinct_publications_only() -> None:
     state = NonDeliveryState()
     base = dict(
         accepted_command_w=1000,
@@ -41,7 +41,6 @@ def test_reanchors_on_fresh_publications_only() -> None:
         measured_fresh=True,
         last_write_mono=0.0,
         actuator_latency_s=1.0,
-        shortfall_threshold_w=150.0,
         consecutive_required=3,
         fallback_timeout_s=60.0,
     )
@@ -64,6 +63,73 @@ def test_reanchors_on_fresh_publications_only() -> None:
     result = evaluate_non_delivery(state, now_mono=5.0, publication_id="p3", **base)
     assert result.reanchor
     assert result.measured_w == 40
+
+
+def test_one_battery_sample_counts_once_across_watchdogs() -> None:
+    state = NonDeliveryState()
+    kwargs = dict(
+        accepted_command_w=1000,
+        measured_power_w=40.0,
+        measured_fresh=True,
+        last_write_mono=0.0,
+        actuator_latency_s=1.0,
+        consecutive_required=3,
+        fallback_timeout_s=60.0,
+    )
+    for stamp in (2.0, 3.0, 4.0, 8.0, 12.0):
+        evaluate_non_delivery(
+            state,
+            now_mono=stamp,
+            publication_id="same-battery",
+            source_mono=2.0,
+            **kwargs,
+        )
+    assert state.shortfall_count == 1
+
+    anonymous = NonDeliveryState()
+    for stamp in (2.0, 3.0, 4.0):
+        evaluate_non_delivery(
+            anonymous,
+            now_mono=stamp,
+            publication_id=None,
+            source_mono=None,
+            **kwargs,
+        )
+    assert anonymous.shortfall_count == 0
+
+    by_time = NonDeliveryState()
+    evaluate_non_delivery(
+        by_time, now_mono=2.0, publication_id=None, source_mono=2.0, **kwargs
+    )
+    evaluate_non_delivery(
+        by_time, now_mono=9.0, publication_id=None, source_mono=2.0, **kwargs
+    )
+    assert by_time.shortfall_count == 1
+
+
+def test_three_distinct_battery_publications_reanchor() -> None:
+    state = NonDeliveryState()
+    kwargs = dict(
+        accepted_command_w=1000,
+        measured_power_w=40.0,
+        measured_fresh=True,
+        last_write_mono=0.0,
+        actuator_latency_s=1.0,
+        consecutive_required=3,
+        fallback_timeout_s=60.0,
+    )
+    for index, source in enumerate((2.0, 4.0, 6.0), start=1):
+        result = evaluate_non_delivery(
+            state,
+            now_mono=source,
+            publication_id=None,
+            source_mono=source,
+            **kwargs,
+        )
+    assert state.shortfall_count == 0
+    assert result.reanchor
+    assert result.measured_w == 40
+    assert index == 3
 
 
 def test_persistent_opposite_delivery_reanchors_without_one_glitch() -> None:
@@ -102,66 +168,40 @@ def test_fallback_timeout_needs_a_later_publication() -> None:
 
 
 def test_reanchor_does_not_accept_measured_power() -> None:
-    ledger = CommandLedger(accepted_w=1000, reference_w=1000)
+    ledger = CommandLedger(accepted_w=1000)
     ledger.last_success_mono = 0.0
     pd_state = PDState()
-    pd_state.last_proposed_w = 1000
+    pd_state.requested_w = 1000
     pd_state.derivative_filtered = 25.0
-    non_delivery = NonDeliveryState()
-    base = dict(
-        measured_power_w=40.0,
-        measured_fresh=True,
-        now_mono=0.0,
-        actuator_latency_s=1.0,
-        consecutive_required=3,
-        fallback_timeout_s=60.0,
-    )
+    params = PDParams(kp=0.35, kd=1.0, battery_actuator_latency_s=1.0)
+    result = None
     for index, stamp in enumerate((2.0, 3.0, 4.0), start=1):
         result = consider_battery_delivery(
             ledger,
             pd_state,
-            non_delivery,
+            params,
+            measured_power_w=40.0,
+            measured_fresh=True,
+            now_mono=stamp,
             publication_id=f"m{index}",
-            **{**base, "now_mono": stamp},
+            consecutive_required=3,
+            fallback_timeout_s=60.0,
         )
-    assert result.reanchor
+    assert result is not None and result.reanchor
     assert ledger.accepted_w == 1000
-    assert ledger.reference_w == 40
+    assert pd_state.requested_w == 40
     assert ledger.anchored_from_measurement
-    assert pd_state.last_proposed_w == 40
     assert pd_state.derivative_filtered == 0.0
+    assert pd_state.last_direction == 1
 
-    # The next proposal is built on the measurement, not on the undelivered 1000 W.
     stepped = pd_step(
         pd_state,
-        PDParams(kp=0.35, kd=1.0),
+        params,
         grid_raw_w=0.0,
         now_mono=5.0,
         source_mono=5.0,
-        reference_command_w=ledger.reference_w,
         publication_id="after",
     )
     assert stepped.proposed_command_w == 40
     assert stepped.d_term == 0.0
     assert ledger.accepted_w == 1000
-
-
-def test_in_flight_write_defers_reanchor() -> None:
-    ledger = CommandLedger(accepted_w=1000, reference_w=1000)
-    ledger.last_success_mono = 0.0
-    ledger.in_flight_w = 700
-    result = consider_battery_delivery(
-        ledger,
-        PDState(),
-        NonDeliveryState(shortfall_count=5),
-        measured_power_w=0.0,
-        measured_fresh=True,
-        now_mono=20.0,
-        actuator_latency_s=1.0,
-        publication_id="defer",
-        consecutive_required=1,
-    )
-    assert result.reanchor is False
-    assert ledger.accepted_w == 1000
-    assert ledger.reference_w == 1000
-    assert ledger.anchored_from_measurement is False

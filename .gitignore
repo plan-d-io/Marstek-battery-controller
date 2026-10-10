@@ -2,3 +2,5 @@ automations/
 architecture/
 marstek-modbus/
 *.code-workspace
+__pycache__/
+*.py[cod]

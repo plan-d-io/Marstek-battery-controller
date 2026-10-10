@@ -16,12 +16,12 @@ def test_duplicate_publication_does_not_integrate_twice() -> None:
     assert tracker.publish(
         "grid", 500.0, source_mono=10.0, receive_mono=10.0, publication_id="a"
     ).new_feedback
-    first = control_grid(state, PDParams(), tracker, now_mono=10.0, reference_command_w=0)
+    first = control_grid(state, PDParams(), tracker, now_mono=10.0)
     assert first.integrate_applied
     assert tracker.publish(
         "grid", 500.0, source_mono=12.0, receive_mono=12.0, publication_id="a"
     ).new_feedback is False
-    second = control_grid(state, PDParams(), tracker, now_mono=12.0, reference_command_w=0)
+    second = control_grid(state, PDParams(), tracker, now_mono=12.0)
     assert second.integrate_applied is False
     assert state.last_integrate_mono == 10.0
 
@@ -30,12 +30,12 @@ def test_new_publication_integrates_once() -> None:
     tracker = PublicationTracker()
     state = PDState()
     tracker.publish("grid", 100.0, source_mono=1.0, receive_mono=1.0, publication_id="1")
-    control_grid(state, PDParams(), tracker, now_mono=1.0, reference_command_w=0)
+    control_grid(state, PDParams(), tracker, now_mono=1.0)
     assert tracker.publish(
         "grid", 400.0, source_mono=3.0, receive_mono=3.0, publication_id="2"
     ).new_feedback
     assert tracker.should_integrate_grid(3.0)
-    second = control_grid(state, PDParams(), tracker, now_mono=3.0, reference_command_w=0)
+    second = control_grid(state, PDParams(), tracker, now_mono=3.0)
     assert second.integrate_applied
     assert state.last_publication_id == "2"
 
@@ -44,10 +44,10 @@ def test_soc_update_does_not_integrate_grid() -> None:
     tracker = PublicationTracker()
     state = PDState()
     tracker.publish("grid", 500.0, source_mono=1.0, receive_mono=1.0, publication_id="g")
-    control_grid(state, PDParams(), tracker, now_mono=1.0, reference_command_w=0)
+    control_grid(state, PDParams(), tracker, now_mono=1.0)
     tracker.publish("soc", 55.0, source_mono=2.0, receive_mono=2.0, publication_id="soc")
     tracker.publish("battery", 10.0, source_mono=2.0, receive_mono=2.0, publication_id="b")
-    again = control_grid(state, PDParams(), tracker, now_mono=2.0, reference_command_w=0)
+    again = control_grid(state, PDParams(), tracker, now_mono=2.0)
     assert again.integrate_applied is False
     assert state.last_integrate_mono == 1.0
 
@@ -66,9 +66,7 @@ def test_wall_age_stale_sample_is_not_feedback() -> None:
     assert result.new_feedback is False
     assert tracker.grid_is_fresh(100.0) is False
     assert tracker.should_integrate_grid(100.0) is False
-    stepped = control_grid(
-        PDState(), PDParams(), tracker, now_mono=100.0, reference_command_w=0
-    )
+    stepped = control_grid(PDState(), PDParams(), tracker, now_mono=100.0)
     assert stepped.integrate_applied is False
     assert stepped.reason_code == "stale_input"
 

@@ -1,13 +1,21 @@
-"""Detect sustained battery non-delivery without treating it as a new command.
+"""Delivery feedback for an already configured battery command.
 
-The helper only reports that the PD baseline should move to the measured
-power. It never writes accepted-command state. Stale samples and repeated
-publication ids do not change the shortfall count.
+Measured power is not the setpoint-deduplication baseline. It only answers
+whether the battery is following the command the device already reports.
+A missing publication identity is never treated as a new measurement.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Final
+
+# Omnibattery logs weak delivery below max(25 W, 10% of the command).
+# The 10% rule is the initial criterion for ordinary commands of at least 100 W.
+DELIVERY_FRACTION: Final = 0.10
+DELIVERY_COMMAND_FLOOR_W: Final = 100.0
+# Measured power at or above this, while a zero command is reported, has left idle.
+IDLE_MEASURED_W: Final = 25.0
 
 
 @dataclass
@@ -17,7 +25,7 @@ class NonDeliveryState:
     shortfall_count: int = 0
     first_shortfall_mono: float | None = None
     last_checked_command_w: int | None = None
-    last_counted_publication_id: str | None = None
+    last_counted_token: str | None = None
 
 
 @dataclass(frozen=True)
@@ -29,10 +37,43 @@ class NonDeliveryResult:
     shortfall_w: float
 
 
+def observation_token(
+    publication_id: str | None,
+    source_mono: float | None,
+) -> str | None:
+    """Identity of one battery publication. None means "do not count"."""
+    if publication_id:
+        return f"id:{publication_id}"
+    if source_mono is not None:
+        return f"t:{source_mono:.9f}"
+    return None
+
+
+def delivery_threshold_w(command_w: int) -> float:
+    """Omnibattery's initial low-power check: max(25 W, 10% of the command)."""
+    return max(IDLE_MEASURED_W, DELIVERY_FRACTION * abs(float(command_w)))
+
+
+def delivering_command(command_w: int, measured_power_w: float) -> bool:
+    """Whether measured power is far enough in the commanded direction.
+
+    For a nonzero command the threshold is ``max(25 W, 10% of |command|)``.
+    At or above ``DELIVERY_COMMAND_FLOOR_W`` that is Omnibattery's initial
+    delivery criterion (10% once the command exceeds 250 W). Zero is idle
+    when the measurement stays inside the 25 W floor.
+    """
+    if command_w == 0:
+        return abs(measured_power_w) < IDLE_MEASURED_W
+    threshold = delivery_threshold_w(command_w)
+    if command_w > 0:
+        return measured_power_w >= threshold
+    return measured_power_w <= -threshold
+
+
 def _reset(state: NonDeliveryState) -> None:
     state.shortfall_count = 0
     state.first_shortfall_mono = None
-    state.last_counted_publication_id = None
+    state.last_counted_token = None
 
 
 def evaluate_non_delivery(
@@ -44,16 +85,16 @@ def evaluate_non_delivery(
     now_mono: float,
     last_write_mono: float | None,
     actuator_latency_s: float,
-    shortfall_threshold_w: float = 150.0,
     consecutive_required: int = 3,
     fallback_timeout_s: float = 15.0,
     publication_id: str | None = None,
+    source_mono: float | None = None,
 ) -> NonDeliveryResult:
-    """Count persistent divergence between an accepted command and fresh power.
+    """Count persistent under-delivery of one configured command.
 
-    Compare against the accepted command, not the PD reference. A shortfall
-    during actuator settle is ignored. The same publication cannot increment
-    the count again. A stale measurement is ignored and does not erase progress.
+    The same battery publication — by id or by monotonic source time — counts
+    once. Calls with neither identity do not count. Settling time and stale
+    measurements do not count and do not erase progress.
     """
     if accepted_command_w == 0:
         _reset(state)
@@ -66,7 +107,8 @@ def evaluate_non_delivery(
     if last_write_mono is None or (now_mono - last_write_mono) < actuator_latency_s:
         return NonDeliveryResult(reanchor=False, measured_w=None, shortfall_w=0.0)
 
-    if publication_id is not None and publication_id == state.last_counted_publication_id:
+    token = observation_token(publication_id, source_mono)
+    if token is None or token == state.last_counted_token:
         return NonDeliveryResult(reanchor=False, measured_w=None, shortfall_w=0.0)
 
     measured = float(measured_power_w)
@@ -74,12 +116,13 @@ def evaluate_non_delivery(
         shortfall = float(accepted_command_w) - measured
     else:
         shortfall = measured - float(accepted_command_w)
+    sufficient = delivering_command(accepted_command_w, measured)
 
-    if shortfall < shortfall_threshold_w:
+    if sufficient:
         state.shortfall_count = 0
         state.first_shortfall_mono = None
         state.last_checked_command_w = accepted_command_w
-        state.last_counted_publication_id = publication_id
+        state.last_counted_token = token
         return NonDeliveryResult(
             reanchor=False,
             measured_w=None,
@@ -92,7 +135,7 @@ def evaluate_non_delivery(
         state.last_checked_command_w = accepted_command_w
 
     state.shortfall_count += 1
-    state.last_counted_publication_id = publication_id
+    state.last_counted_token = token
     if state.first_shortfall_mono is None:
         state.first_shortfall_mono = now_mono
 

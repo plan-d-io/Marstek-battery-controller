@@ -2,6 +2,16 @@
 
 No Home Assistant imports. Callers inject monotonic timestamps.
 
+Seven different things are kept apart:
+
+* a fresh grid publication
+* an eligible control opportunity, after ``min_interval_s``
+* ``requested_w``, the controller's internal output
+* the last command a transport call actually accepted (the ledger)
+* the command the device reports (injected later as ``reported_command_w``)
+* measured battery power, which is delivery feedback only
+* one in-flight physical write
+
 Sign convention (production Marstek, not a guess):
 
 * Positive watts are discharge / grid import.
@@ -13,17 +23,21 @@ and ``setpoint_w < 0`` to force charge. ``calculator`` agrees: a positive grid
 reading produces a positive (discharge) base, boost and manual charge commands
 are negative, and the SoC floor blocks a positive setpoint.
 
-Feedback law, evaluated at most once per fresh grid publication::
+On each eligible opportunity the internal request moves by::
 
     error = filtered_grid - target_grid
-    command = reference + kp * error * p_scale + kd * filtered_derivative
+    requested += kp * error * (dt / nominal) + kd * filtered_derivative
 
-``reference`` is the accepted command, or a measurement re-anchor that is not
-itself an accepted command. Positive error (import) increases discharge.
-Omnibattery uses the opposite actuator sign and subtracts the same correction.
+``dt`` is the source-time gap since the previous opportunity. The first
+opportunity has no measured gap and uses ``min_interval_s`` instead, so the
+math is not tied to the Home Assistant send-interval default of 5 s.
+Positive error (import) increases discharge. Omnibattery uses the opposite
+actuator sign and subtracts the same correction.
 
-Watchdog and stale calls repeat the last proposal. They do not update the
-filter, the derivative, the publication identity, or the zero-cross timer.
+A calculated request is not a physical command. Direction changes only when a
+write is accepted, a measurement re-anchor is applied, or control is released.
+The zero-cross dwell starts at ``now_mono``, the time the controller sees the
+reversal, never at a source timestamp that is already in the past.
 """
 
 from __future__ import annotations
@@ -47,9 +61,14 @@ STEP_FLOOR_W: Final = 200.0
 DEFAULT_ZERO_CROSS_HOLD_S: Final = 5.0
 
 # Internal defaults follow Omnibattery's balanced PD profile. They are not
-# Home Assistant controls; Milestone 1 does not expose them.
+# Home Assistant controls in this milestone.
 DEFAULT_KP: Final = 0.35
 DEFAULT_KD: Final = 0.30
+# Allowed grid error around the target. 0 disables it. Milestone 2 exposes
+# this as number.marstek_battery_controller_pd_grid_deadband, step 5 W.
+PD_DEADBAND_MIN_W: Final = 0.0
+PD_DEADBAND_MAX_W: Final = 200.0
+PD_DEADBAND_STEP_W: Final = 5.0
 DEFAULT_DEADBAND_W: Final = 40.0
 DEFAULT_MAX_POWER_CHANGE_W: Final = 800.0
 DEFAULT_DIRECTION_HYSTERESIS_W: Final = 60.0
@@ -58,11 +77,15 @@ DEFAULT_DERIVATIVE_EMA_TAU_S: Final = 3.0
 # Longer than Omnibattery's direct Marstek latency (0.8 s) because this
 # integration reaches the battery through several Home Assistant service calls.
 DEFAULT_ACTUATOR_LATENCY_S: Final = 3.0
+# Omnibattery's event-driven PD minimum. The Home Assistant send-interval
+# entity (default 5 s, range 1–60 s) is applied later by passing that value
+# in. It is not a heartbeat and it is not hard-coded here.
+DEFAULT_MIN_INTERVAL_S: Final = 1.0
 
 
 @dataclass
 class PDParams:
-    """Controller parameters. Defaults are conservative and internal."""
+    """Controller parameters. Defaults are internal until a later milestone."""
 
     kp: float = DEFAULT_KP
     kd: float = DEFAULT_KD
@@ -73,11 +96,13 @@ class PDParams:
     derivative_ema_tau_s: float = DEFAULT_DERIVATIVE_EMA_TAU_S
     battery_actuator_latency_s: float = DEFAULT_ACTUATOR_LATENCY_S
     max_battery_power_w: float = DEFAULT_MAX_BATTERY_POWER
+    # Minimum time between ordinary control opportunities. Not a write period.
+    min_interval_s: float = DEFAULT_MIN_INTERVAL_S
 
 
 @dataclass
 class PDState:
-    """Mutable filter, publication, and zero-cross memory."""
+    """Filter memory, the internal request, and physical direction."""
 
     grid_filtered: float | None = None
     previous_error: float = 0.0
@@ -87,10 +112,16 @@ class PDState:
     last_integrate_mono: float | None = None
     last_publication_id: str | None = None
     last_source_mono: float | None = None
-    # Last non-zero direction: +1 discharge, -1 charge, 0 idle.
+    # Receipt time of the last ordinary control opportunity.
+    last_opportunity_mono: float | None = None
+    # Internal PD output. Distinct from the last accepted physical command.
+    requested_w: int = 0
+    # Last nonzero physical direction: +1 discharge, -1 charge, 0 idle.
     last_direction: int = 0
     opposite_since_mono: float | None = None
     zero_cross_holding: bool = False
+    # Set when a hold elapses so the next sample can cross without a new dwell.
+    reversal_unlocked: bool = False
     last_error: float = 0.0
     last_p_term: float = 0.0
     last_d_term: float = 0.0
@@ -128,6 +159,11 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
+def grid_deadband_w(params: PDParams) -> float:
+    """Allowed grid error. Values outside 0–200 W are pulled into that range."""
+    return _clamp(float(params.deadband_w), PD_DEADBAND_MIN_W, PD_DEADBAND_MAX_W)
+
+
 def _ema(previous: float, raw: float, dt: float, tau: float) -> float:
     alpha = dt / (tau + dt) if tau > 0 else 1.0
     return previous + alpha * (raw - previous)
@@ -139,7 +175,7 @@ def zero_cross_hold_s(params: PDParams) -> float:
 
 
 def reset_pd_state(state: PDState) -> None:
-    """Clear filter, derivative, publication, and zero-cross memory."""
+    """Clear filter, request, publication, and zero-cross memory."""
     state.grid_filtered = None
     state.previous_error = 0.0
     state.derivative_filtered = 0.0
@@ -148,9 +184,12 @@ def reset_pd_state(state: PDState) -> None:
     state.last_integrate_mono = None
     state.last_publication_id = None
     state.last_source_mono = None
+    state.last_opportunity_mono = None
+    state.requested_w = 0
     state.last_direction = 0
     state.opposite_since_mono = None
     state.zero_cross_holding = False
+    state.reversal_unlocked = False
     state.last_error = 0.0
     state.last_p_term = 0.0
     state.last_d_term = 0.0
@@ -159,21 +198,52 @@ def reset_pd_state(state: PDState) -> None:
     state.last_proposed_w = None
 
 
-def reanchor_pd_state(state: PDState, measured_power_w: float) -> None:
-    """Drop windup after sustained non-delivery.
+def note_accepted_command(state: PDState, command_w: int) -> None:
+    """Remember direction from a command the transport actually accepted.
 
-    The measured wattage becomes the derivative/direction baseline only. It is
-    not an accepted command; the caller keeps that on the command ledger.
+    A proposal never calls this. Accepting zero during a reversal hold keeps
+    the last nonzero direction until the reversal finishes or is released.
     """
+    command = int(command_w)
+    if command > 0:
+        state.last_direction = 1
+        state.reversal_unlocked = False
+        return
+    if command < 0:
+        state.last_direction = -1
+        state.reversal_unlocked = False
+        return
+    if state.opposite_since_mono is not None or state.reversal_unlocked:
+        return
+    state.last_direction = 0
+
+
+def release_control(state: PDState) -> None:
+    """Explicit safety release. Clears the request, the hold, and direction."""
+    state.requested_w = 0
+    state.last_proposed_w = 0
+    state.last_direction = 0
+    state.opposite_since_mono = None
+    state.zero_cross_holding = False
+    state.reversal_unlocked = False
+
+
+def reanchor_pd_state(state: PDState, measured_power_w: float) -> None:
+    """Move the internal request to measured power after sustained non-delivery.
+
+    This does not accept the measurement and does not touch the ledger.
+    """
+    measured = int(round(measured_power_w))
     state.previous_error = 0.0
     state.derivative_filtered = 0.0
     state.suppress_derivative_once = True
     state.opposite_since_mono = None
     state.zero_cross_holding = False
+    state.reversal_unlocked = False
     state.last_direction = _sign(measured_power_w)
     state.last_slew_limited = False
-    # Next watchdog repeats this baseline. It is a proposal, not an accept.
-    state.last_proposed_w = int(round(measured_power_w))
+    state.requested_w = measured
+    state.last_proposed_w = measured
 
 
 def _can_integrate(
@@ -212,36 +282,20 @@ def _clamp_command(proposed: float, params: PDParams) -> tuple[int, bool]:
     return int(round(limited)), clamped
 
 
-def _frozen_result(
+def _read_only_result(
     state: PDState,
     params: PDParams,
     *,
     grid_raw_w: float,
-    reference_command_w: int,
-    allow_charge: bool,
-    allow_discharge: bool,
+    proposed: int,
     reason_code: str,
+    zero_cross_hold: bool,
 ) -> PDStepResult:
-    """Repeat the last proposal without integrating, deriving, or moving the hold."""
-    holding = state.opposite_since_mono is not None
-    if holding:
-        proposed = 0
-    elif state.last_proposed_w is not None:
-        proposed = state.last_proposed_w
-    else:
-        proposed = int(reference_command_w)
-    proposed = _apply_permissions(
-        proposed, allow_charge=allow_charge, allow_discharge=allow_discharge
-    )
-    proposed, clamped = _clamp_command(float(proposed), params)
+    """Return a proposal without writing controller memory."""
     filtered = state.grid_filtered if state.grid_filtered is not None else float(grid_raw_w)
-    reason = reason_code
-    if proposed == 0 and not allow_discharge and (state.last_proposed_w or 0) > 0:
-        reason = "discharge_blocked"
-    elif proposed == 0 and not allow_charge and (state.last_proposed_w or 0) < 0:
-        reason = "charge_blocked"
+    limited, clamped = _clamp_command(float(proposed), params)
     return PDStepResult(
-        proposed_command_w=proposed,
+        proposed_command_w=limited,
         filtered_grid_w=filtered,
         error_w=state.last_error,
         p_term=0.0,
@@ -249,9 +303,9 @@ def _frozen_result(
         in_deadband=state.last_in_deadband,
         slew_limited=False,
         clamped=clamped,
-        zero_cross_hold=holding,
+        zero_cross_hold=zero_cross_hold,
         integrate_applied=False,
-        reason_code=reason,
+        reason_code=reason_code,
     )
 
 
@@ -260,31 +314,31 @@ def _apply_direction_gate(
     params: PDParams,
     *,
     proposed_w: int,
-    reference_w: int,
     error_w: float,
     now_mono: float,
 ) -> tuple[int, bool, str | None]:
-    """Hold at zero until an opposite demand has persisted.
+    """Hold at zero until an opposite physical direction has persisted.
 
-    Same-direction corrections pass. A demand that returns before the hold
-    expires cancels the pending reversal, so a later sample cannot inherit it.
+    ``now_mono`` is the receipt time. A source timestamp must not start the
+    dwell in the past. ``last_direction`` is physical and is not modified here.
     """
-    reference_dir = _sign(reference_w) or state.last_direction
-    intent_dir = _sign(error_w) if abs(error_w) > params.deadband_w else 0
+    direction = state.last_direction
+    deadband = grid_deadband_w(params)
+    intent_dir = _sign(error_w) if abs(error_w) > deadband else 0
     hold_needed = zero_cross_hold_s(params)
 
-    if (
-        state.opposite_since_mono is not None
-        and reference_dir != 0
-        and intent_dir in (0, reference_dir)
-    ):
-        state.opposite_since_mono = None
+    if state.reversal_unlocked:
+        if direction == 0 or intent_dir in (0, direction):
+            state.reversal_unlocked = False
+        else:
+            state.opposite_since_mono = None
+            return proposed_w, False, None
 
-    if reference_dir != 0 and intent_dir in (0, reference_dir):
+    if direction != 0 and intent_dir in (0, direction):
         state.opposite_since_mono = None
         return proposed_w, False, None
 
-    if reference_dir == 0:
+    if direction == 0:
         if (
             abs(proposed_w) < params.direction_hysteresis_w
             and abs(error_w) < params.direction_hysteresis_w
@@ -293,22 +347,21 @@ def _apply_direction_gate(
         state.opposite_since_mono = None
         return proposed_w, False, None
 
-    # Too small to justify a reversal. Keep the same-direction correction.
     if abs(error_w) < params.direction_hysteresis_w:
-        if _sign(proposed_w) in (0, reference_dir):
+        if _sign(proposed_w) in (0, direction):
             return proposed_w, False, None
-        return reference_w, False, None
+        return state.requested_w, False, None
 
     if state.opposite_since_mono is None:
-        state.opposite_since_mono = now_mono
+        state.opposite_since_mono = float(now_mono)
         return 0, True, "pd_zero_cross_hold"
 
     if now_mono - state.opposite_since_mono < hold_needed:
         return 0, True, "pd_zero_cross_hold"
 
     state.opposite_since_mono = None
-    # Still on the old side of zero: stop, and let the next sample leave from 0.
-    if _sign(proposed_w) == reference_dir:
+    state.reversal_unlocked = True
+    if _sign(proposed_w) == direction:
         return 0, False, None
     return proposed_w, False, None
 
@@ -319,7 +372,6 @@ def pd_step(
     *,
     grid_raw_w: float,
     now_mono: float,
-    reference_command_w: int,
     integrate: bool = True,
     fresh: bool = True,
     publication_id: str | None = None,
@@ -329,14 +381,12 @@ def pd_step(
     allow_charge: bool = True,
     allow_discharge: bool = True,
 ) -> PDStepResult:
-    """Propose a signed battery command from one grid observation.
+    """Propose the next internal request from one grid observation.
 
-    ``reference_command_w`` is the incremental baseline (accepted command, or a
-    measurement re-anchor). The returned proposal is not accepted state.
+    The baseline is ``state.requested_w``. The returned proposal is not
+    accepted state, and it does not change ``last_direction``.
     """
     if force_zero:
-        # Consume a fresh publication so the same sample cannot integrate after
-        # the block lifts. Do not move the filter, derivative, or integrate clock.
         if _can_integrate(
             state,
             integrate=integrate,
@@ -347,10 +397,7 @@ def pd_step(
             state.last_publication_id = publication_id
             if source_mono is not None:
                 state.last_source_mono = float(source_mono)
-        state.opposite_since_mono = None
-        state.zero_cross_holding = False
-        state.last_direction = 0
-        state.last_proposed_w = 0
+        release_control(state)
         filtered = state.grid_filtered if state.grid_filtered is not None else float(grid_raw_w)
         return PDStepResult(
             proposed_command_w=0,
@@ -366,6 +413,16 @@ def pd_step(
             reason_code="operation_blocked",
         )
 
+    if not fresh:
+        return _read_only_result(
+            state,
+            params,
+            grid_raw_w=grid_raw_w,
+            proposed=0,
+            reason_code="stale_input",
+            zero_cross_hold=state.opposite_since_mono is not None,
+        )
+
     if not _can_integrate(
         state,
         integrate=integrate,
@@ -373,34 +430,31 @@ def pd_step(
         publication_id=publication_id,
         source_mono=source_mono,
     ):
-        if not fresh:
-            reason = "stale_input"
-        elif not integrate:
-            reason = "watchdog"
-        else:
-            reason = "same_publication"
-        return _frozen_result(
+        reason = "watchdog" if not integrate else "same_publication"
+        holding = state.opposite_since_mono is not None
+        proposed = 0 if holding else state.requested_w
+        return _read_only_result(
             state,
             params,
             grid_raw_w=grid_raw_w,
-            reference_command_w=reference_command_w,
-            allow_charge=allow_charge,
-            allow_discharge=allow_discharge,
+            proposed=proposed,
             reason_code=reason,
+            zero_cross_hold=holding,
         )
 
     sample_mono = float(source_mono) if source_mono is not None else float(now_mono)
     if state.last_integrate_mono is None:
-        p_dt = NOMINAL_CYCLE_S
+        p_dt = _clamp(params.min_interval_s, P_DT_MIN_S, P_DT_MAX_S)
     else:
         p_dt = _clamp(sample_mono - state.last_integrate_mono, P_DT_MIN_S, P_DT_MAX_S)
     d_dt = max(p_dt, DERIVATIVE_DT_FLOOR_S)
+    deadband = grid_deadband_w(params)
 
     filtered = state.grid_filtered
     if filtered is None:
         filtered = float(grid_raw_w)
     else:
-        step_threshold = max(3.0 * params.deadband_w, STEP_FLOOR_W)
+        step_threshold = max(3.0 * deadband, STEP_FLOOR_W)
         if abs(grid_raw_w - filtered) > step_threshold:
             filtered = float(grid_raw_w)
         else:
@@ -408,7 +462,7 @@ def pd_step(
     state.grid_filtered = filtered
 
     error = filtered - target_grid_w
-    in_deadband = abs(error) <= params.deadband_w
+    in_deadband = abs(error) <= deadband
     p_scale = p_dt / NOMINAL_CYCLE_S
     if params.kp > 0:
         # Incremental P behaves like an integrator. Cap it so a slow sample
@@ -419,11 +473,12 @@ def pd_step(
     d_term = 0.0
     slew_limited = False
     reason: str | None = None
-    reference = float(reference_command_w)
+    reference = float(state.requested_w)
 
     if in_deadband:
         raw_command = reference
         state.derivative_filtered = 0.0
+        state.suppress_derivative_once = True
         reason = "pd_deadband"
     else:
         if state.derivative_ready and not state.suppress_derivative_once:
@@ -459,17 +514,13 @@ def pd_step(
     state.last_publication_id = publication_id
     state.last_source_mono = sample_mono
 
-    if reference_command_w != 0:
-        state.last_direction = _sign(reference_command_w)
-
     proposed_unclamped = int(round(raw_command))
     proposed, zero_hold, dir_reason = _apply_direction_gate(
         state,
         params,
         proposed_w=proposed_unclamped,
-        reference_w=reference_command_w,
         error_w=error,
-        now_mono=sample_mono,
+        now_mono=now_mono,
     )
     if dir_reason:
         reason = dir_reason
@@ -485,19 +536,8 @@ def pd_step(
     if clamped and reason is None:
         reason = "pd_clamped"
 
-    if not zero_hold and proposed != 0:
-        # Remember an emitted direction so the next sample does not re-arm the hold
-        # while the write that will accept it is still in flight.
-        state.last_direction = _sign(proposed)
-    elif (
-        not zero_hold
-        and state.opposite_since_mono is None
-        and reference_command_w == 0
-        and proposed == 0
-    ):
-        state.last_direction = 0
-
     state.zero_cross_holding = zero_hold
+    state.requested_w = proposed
     state.last_proposed_w = proposed
 
     return PDStepResult(
@@ -515,36 +555,145 @@ def pd_step(
     )
 
 
+def _permission_block(
+    state: PDState,
+    params: PDParams,
+    *,
+    grid_raw_w: float,
+    allow_charge: bool,
+    allow_discharge: bool,
+) -> PDStepResult | None:
+    """Zero a request that a new SoC or permission block no longer allows.
+
+    Filters, publication identity, cadence, direction, and the zero-cross
+    timer stay as they are. The ordinary interval does not delay this.
+    """
+    if state.requested_w > 0 and not allow_discharge:
+        reason = "discharge_blocked"
+    elif state.requested_w < 0 and not allow_charge:
+        reason = "charge_blocked"
+    else:
+        return None
+    state.requested_w = 0
+    state.last_proposed_w = 0
+    filtered = state.grid_filtered if state.grid_filtered is not None else float(grid_raw_w)
+    return PDStepResult(
+        proposed_command_w=0,
+        filtered_grid_w=filtered,
+        error_w=state.last_error,
+        p_term=0.0,
+        d_term=0.0,
+        in_deadband=state.last_in_deadband,
+        slew_limited=False,
+        clamped=False,
+        zero_cross_hold=state.opposite_since_mono is not None,
+        integrate_applied=False,
+        reason_code=reason,
+    )
+
+
 def control_grid(
     state: PDState,
     params: PDParams,
     tracker: PublicationTracker,
     *,
     now_mono: float,
-    reference_command_w: int,
+    opportunity: bool = True,
     target_grid_w: float = 0.0,
     force_zero: bool = False,
     allow_charge: bool = True,
     allow_discharge: bool = True,
 ) -> PDStepResult:
-    """Advance from the tracker's grid sample, at most once per publication."""
+    """Run one control observation against the tracker's newest grid sample.
+
+    A fresh publication only integrates when ``opportunity`` is set and the
+    minimum interval since the previous opportunity has elapsed. Samples that
+    arrive while the gate is closed stay available, so the next open
+    opportunity uses the newest one. A watchdog (``opportunity`` false) may
+    repeat the current request or apply a safety block. It does not integrate.
+    Definitive staleness returns zero and writes nothing.
+    """
     value = tracker.grid.value
-    eligible = value is not None and tracker.should_integrate_grid(now_mono)
-    result = pd_step(
+    fresh = value is not None and tracker.grid_is_fresh(now_mono)
+    grid = 0.0 if value is None else float(value)
+    source = tracker.grid.source_mono
+    publication_id = tracker.grid.publication_id
+    eligible = tracker.should_integrate_grid(now_mono)
+
+    if force_zero:
+        result = pd_step(
+            state,
+            params,
+            grid_raw_w=grid,
+            now_mono=now_mono,
+            source_mono=source,
+            publication_id=publication_id,
+            fresh=fresh,
+            integrate=eligible,
+            target_grid_w=target_grid_w,
+            force_zero=True,
+            allow_charge=allow_charge,
+            allow_discharge=allow_discharge,
+        )
+        if eligible:
+            tracker.mark_grid_integrated()
+        return result
+
+    if not fresh:
+        return pd_step(
+            state,
+            params,
+            grid_raw_w=grid,
+            now_mono=now_mono,
+            source_mono=source,
+            publication_id=publication_id,
+            fresh=False,
+            integrate=False,
+            target_grid_w=target_grid_w,
+            allow_charge=allow_charge,
+            allow_discharge=allow_discharge,
+        )
+
+    blocked = _permission_block(
         state,
         params,
-        grid_raw_w=0.0 if value is None else float(value),
-        now_mono=now_mono,
-        source_mono=tracker.grid.source_mono,
-        publication_id=tracker.grid.publication_id,
-        fresh=value is not None and tracker.grid_is_fresh(now_mono),
-        integrate=eligible,
-        reference_command_w=reference_command_w,
-        target_grid_w=target_grid_w,
-        force_zero=force_zero,
+        grid_raw_w=grid,
         allow_charge=allow_charge,
         allow_discharge=allow_discharge,
     )
-    if result.integrate_applied or (force_zero and eligible):
+    if blocked is not None:
+        return blocked
+
+    gate_open = (
+        state.last_opportunity_mono is None
+        or (now_mono - state.last_opportunity_mono) + 1e-9 >= params.min_interval_s
+    )
+    integrate = bool(opportunity and eligible and gate_open)
+    if opportunity and eligible and not gate_open:
+        holding = state.opposite_since_mono is not None
+        return _read_only_result(
+            state,
+            params,
+            grid_raw_w=grid,
+            proposed=0 if holding else state.requested_w,
+            reason_code="interval_gate",
+            zero_cross_hold=holding,
+        )
+
+    result = pd_step(
+        state,
+        params,
+        grid_raw_w=grid,
+        now_mono=now_mono,
+        source_mono=source,
+        publication_id=publication_id,
+        fresh=True,
+        integrate=integrate,
+        target_grid_w=target_grid_w,
+        allow_charge=allow_charge,
+        allow_discharge=allow_discharge,
+    )
+    if result.integrate_applied:
+        state.last_opportunity_mono = float(now_mono)
         tracker.mark_grid_integrated()
     return result
