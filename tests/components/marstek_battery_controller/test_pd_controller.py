@@ -19,6 +19,7 @@ from custom_components.marstek_battery_controller.pd_controller import (
     control_grid,
     note_accepted_command,
     pd_step,
+    reanchor_pd_state,
     release_control,
     reset_pd_state,
     zero_cross_hold_s,
@@ -741,6 +742,22 @@ def test_sub_floor_requests_snap_to_zero() -> None:
         assert state.requested_w == kept
 
 
+def test_reanchor_below_the_noise_floor_is_idle() -> None:
+    for watts in range(1, 25):
+        for sign in (1, -1):
+            state = PDState()
+            state.last_direction = -sign
+            reanchor_pd_state(state, sign * watts)
+            assert state.requested_w == 0
+            assert state.last_direction == 0
+    for kept in (25, -25):
+        state = PDState()
+        state.last_direction = 0
+        reanchor_pd_state(state, kept)
+        assert state.requested_w == kept
+        assert state.last_direction == (1 if kept > 0 else -1)
+
+
 def test_proportional_open_loop_gain_stays_at_most_one() -> None:
     """kp * p_scale stays at most 1, including when kp itself is above 1."""
 
@@ -773,3 +790,44 @@ def test_proportional_open_loop_gain_stays_at_most_one() -> None:
     assert p_term(2.0, 0.4) == pytest.approx(400.0)
     # Nominal step at the kp = 1 boundary still applies the full error.
     assert p_term(1.0, 2.0) == pytest.approx(1000.0)
+
+
+@pytest.mark.parametrize(
+    "kp",
+    [-0.01, -1.0, float("nan"), float("inf"), float("-inf")],
+)
+def test_kp_must_be_finite_and_nonnegative(kp: float) -> None:
+    state = PDState()
+    with pytest.raises(ValueError, match="finite and nonnegative"):
+        pd_step(
+            state,
+            PDParams(kp=kp),
+            grid_raw_w=500.0,
+            now_mono=0.0,
+            source_mono=0.0,
+            publication_id="bad-kp",
+        )
+    assert state.grid_filtered is None
+    assert state.requested_w == 0
+
+
+def test_kp_zero_adds_no_proportional_correction() -> None:
+    state = PDState()
+    state.requested_w = 200
+    result = pd_step(
+        state,
+        PDParams(
+            kp=0.0,
+            kd=0.0,
+            deadband_w=0.0,
+            direction_hysteresis_w=0.0,
+            max_power_change_w=5000.0,
+        ),
+        grid_raw_w=1000.0,
+        now_mono=0.0,
+        source_mono=0.0,
+        publication_id="kp0",
+    )
+    assert result.p_term == 0.0
+    assert result.proposed_command_w == 200
+    assert state.requested_w == 200

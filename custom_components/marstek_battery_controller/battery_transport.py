@@ -10,6 +10,7 @@ cancellation is re-raised.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -55,10 +56,10 @@ async def deliver_command(
     and does not mark the command accepted. The caller can then send an
     explicit safety zero or adopt a read-back through ``reconcile_reported``.
 
-    Settling starts when the transport call returns, not when it was issued.
-    Pass ``clock`` to sample monotonic time after the await. ``now_mono`` is
-    the completion time only when no clock is injected, which matches an
-    instantaneous test double.
+    Settling starts when the transport call returns. The completion time is
+    ``time.monotonic`` sampled after the await, unless a test passes
+    ``clock``. ``now_mono`` is not that epoch: callers do not have to supply
+    a clock for the settle window to start at completion.
     """
     decision = ledger.submit(command_w, safety=safety, reassert=reassert)
     if decision.send_w is None:
@@ -85,7 +86,7 @@ async def deliver_command(
             uncertain=ledger.delivery_uncertain,
         )
 
-    completed_mono = float(clock()) if clock is not None else float(now_mono)
+    completed_mono = time.monotonic() if clock is None else float(clock())
     accepted = ledger.succeed(completed_mono, pd_state)
     return DeliveryResult(
         accepted=True,

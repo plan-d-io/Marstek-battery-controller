@@ -21,6 +21,7 @@ from .non_delivery import (
     NonDeliveryState,
     delivering_command,
     evaluate_non_delivery,
+    snap_noise_floor_command,
 )
 from .pd_controller import PDState, note_accepted_command, reanchor_pd_state
 
@@ -58,7 +59,7 @@ class CommandLedger:
     """One in-flight write, one replaceable pending command, one accepted value."""
 
     def __init__(self, *, accepted_w: int = 0) -> None:
-        self.accepted_w = int(accepted_w)
+        self.accepted_w = snap_noise_floor_command(int(accepted_w))
         self.in_flight_w: int | None = None
         self.pending_w: int | None = None
         self.pending_safety: bool = False
@@ -67,10 +68,6 @@ class CommandLedger:
         self.uncertain_command_w: int | None = None
         self.anchored_from_measurement: bool = False
         self.non_delivery = NonDeliveryState()
-        # Readback observed while a write is awaiting completion. It must not
-        # clear ``in_flight_w``. The flight that finishes successfully is newer
-        # than this sample and drops it.
-        self._deferred_report: tuple[int, PDState | None] | None = None
 
     def submit(
         self,
@@ -79,8 +76,11 @@ class CommandLedger:
         safety: bool = False,
         reassert: bool = False,
     ) -> SubmitResult:
-        """Queue or start one command. Newest pending value replaces older ones."""
-        command = int(command_w)
+        """Queue or start one command. Newest pending value replaces older ones.
+
+        A command of 1–24 W is normalized to zero before it is queued or sent.
+        """
+        command = snap_noise_floor_command(int(command_w))
         if self.in_flight_w is not None:
             self.pending_w = command
             self.pending_safety = safety or reassert
@@ -106,8 +106,7 @@ class CommandLedger:
         """Record that the in-flight command was accepted by the transport."""
         if self.in_flight_w is None:
             raise RuntimeError("no in-flight command to accept")
-        self._deferred_report = None
-        sent = self.in_flight_w
+        sent = snap_noise_floor_command(self.in_flight_w)
         self.accepted_w = sent
         self.in_flight_w = None
         self.last_success_mono = now_mono
@@ -124,18 +123,14 @@ class CommandLedger:
         return sent
 
     def fail(self) -> None:
-        """The transport refused the in-flight command.
+        """The transport refused the in-flight command. Accepted state stays.
 
-        The refused command is not accepted. A readback that arrived during
-        the await is adopted, because that write did not land.
+        A readback that arrived during the await is ignored. It may predate
+        the write. Only a new readback after this call returns may reconcile.
         """
         if self.in_flight_w is None:
             raise RuntimeError("no in-flight command to fail")
         self.in_flight_w = None
-        deferred = self._deferred_report
-        self._deferred_report = None
-        if deferred is not None:
-            self._adopt_reported(deferred[0], deferred[1])
 
     def note_cancelled(self, command_w: int, *, call_started: bool) -> None:
         """Free the in-flight slot after cancellation without accepting it.
@@ -146,7 +141,6 @@ class CommandLedger:
         stored as accepted.
         """
         self.in_flight_w = None
-        self._deferred_report = None
         if call_started:
             self.delivery_uncertain = True
             self.uncertain_command_w = int(command_w)
@@ -168,21 +162,20 @@ class CommandLedger:
     ) -> None:
         """Adopt a command read back from the device and clear uncertainty.
 
-        A readback that arrives while a transport call is still awaiting
-        completion is stored and does not touch the in-flight slot. Otherwise
-        ``succeed`` would find nothing to accept. A successful completion is
-        newer than that readback and drops it. A failed completion adopts it,
-        because the write did not land.
+        A readback that arrives while a transport call is awaiting completion
+        is ignored. It must not clear the in-flight slot, and it must not
+        replace the previously accepted command when that write fails. The
+        successful completion accepts the written command. Only a new readback
+        received after the flight has finished may reconcile state. Commands
+        of 1–24 W are stored as zero.
         """
-        reported = int(reported_command_w)
         if self.in_flight_w is not None:
-            self._deferred_report = (reported, pd_state)
             return
-        self._adopt_reported(reported, pd_state)
+        self._adopt_reported(int(reported_command_w), pd_state)
 
     def _adopt_reported(self, reported_command_w: int, pd_state: PDState | None) -> None:
         """Store a device readback. Does not touch an in-flight write."""
-        self.accepted_w = int(reported_command_w)
+        self.accepted_w = snap_noise_floor_command(int(reported_command_w))
         self.delivery_uncertain = False
         self.uncertain_command_w = None
         if pd_state is not None:
@@ -205,9 +198,10 @@ def decide_actuator_write(
     skipped when delivery is sufficient, left alone while the actuator is
     still settling, and reasserted when delivery stays insufficient. A zero
     that is already reported is not repeated while the battery is idle.
+    Requests and reported commands of 1–24 W are normalized to zero first.
     """
-    requested = int(requested_w)
-    reported = int(reported_command_w)
+    requested = snap_noise_floor_command(int(requested_w))
+    reported = snap_noise_floor_command(int(reported_command_w))
     settling = (
         last_change_mono is not None
         and (now_mono - last_change_mono) < actuator_latency_s

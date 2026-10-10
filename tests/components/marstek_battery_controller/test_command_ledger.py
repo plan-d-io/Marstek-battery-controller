@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -357,7 +358,14 @@ def test_readback_during_an_awaited_write_does_not_drop_the_in_flight_slot() -> 
 
     async def scenario() -> None:
         task = asyncio.create_task(
-            deliver_command(transport, ledger, 350, 4.0, pd_state=state)
+            deliver_command(
+                transport,
+                ledger,
+                350,
+                4.0,
+                pd_state=state,
+                clock=lambda: 4.0,
+            )
         )
         await transport.started.wait()
         assert ledger.in_flight_w == 350
@@ -373,8 +381,112 @@ def test_readback_during_an_awaited_write_does_not_drop_the_in_flight_slot() -> 
         assert ledger.in_flight_w is None
         assert ledger.last_success_mono == 4.0
         assert state.last_direction == 1
+        ledger.reconcile_reported(90, state)
+        assert ledger.accepted_w == 90
+        assert state.last_direction == 1
 
     asyncio.run(scenario())
+
+
+def test_failed_write_ignores_a_readback_received_during_the_await() -> None:
+    ledger = CommandLedger(accepted_w=100)
+    state = PDState()
+
+    class _FailAfterHold(_HangingTransport):
+        async def async_send_command(self, command_w: int) -> None:
+            self.started.set()
+            await self.hold.wait()
+            raise RuntimeError("modbus down")
+
+    transport = _FailAfterHold()
+
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            deliver_command(transport, ledger, 350, 0.0, pd_state=state)
+        )
+        await transport.started.wait()
+        ledger.reconcile_reported(80, state)
+        assert ledger.in_flight_w == 350
+        assert ledger.accepted_w == 100
+        assert state.last_direction == 0
+        transport.hold.set()
+        result = await task
+        assert result.accepted is False
+        assert ledger.accepted_w == 100
+        assert ledger.in_flight_w is None
+        assert state.last_direction == 0
+        ledger.reconcile_reported(80, state)
+        assert ledger.accepted_w == 80
+        assert state.last_direction == 1
+
+    asyncio.run(scenario())
+
+
+def test_completion_timestamp_defaults_to_monotonic() -> None:
+    ledger = CommandLedger()
+    before = time.monotonic()
+    result = asyncio.run(deliver_command(_Transport(), ledger, 400, 0.0))
+    after = time.monotonic()
+    assert result.accepted
+    assert before <= ledger.last_success_mono <= after
+
+
+def test_noise_floor_is_applied_at_submit_decision_and_readback() -> None:
+    assert CommandLedger(accepted_w=10).accepted_w == 0
+    assert CommandLedger(accepted_w=-24).accepted_w == 0
+    idle = CommandLedger(accepted_w=0)
+    skipped = idle.submit(24)
+    assert skipped.skipped
+    assert skipped.send_w is None
+    assert idle.submit(-1).skipped
+
+    ledger = CommandLedger(accepted_w=400)
+    assert ledger.submit(1).send_w == 0
+    ledger.fail()
+    assert ledger.accepted_w == 400
+    assert ledger.submit(-24).send_w == 0
+    ledger.fail()
+    assert ledger.submit(25).send_w == 25
+    ledger.fail()
+    assert ledger.submit(-25).send_w == -25
+    ledger.fail()
+    assert ledger.accepted_w == 400
+
+    assert (
+        _decision(requested_w=10, reported_command_w=0, measured_power_w=0.0).action
+        == "skip"
+    )
+    assert (
+        _decision(requested_w=-24, reported_command_w=24, measured_power_w=0.0).action
+        == "skip"
+    )
+    write = _decision(requested_w=25, reported_command_w=0, measured_power_w=0.0)
+    assert write.action == "write"
+    assert write.command_w == 25
+    write_negative = _decision(
+        requested_w=-25, reported_command_w=0, measured_power_w=0.0
+    )
+    assert write_negative.action == "write"
+    assert write_negative.command_w == -25
+    release = _decision(requested_w=24, reported_command_w=400, measured_power_w=0.0)
+    assert release.action == "write"
+    assert release.command_w == 0
+    assert release.bypass_interval
+
+    state = PDState()
+    state.last_direction = 1
+    ledger.reconcile_reported(12, state)
+    assert ledger.accepted_w == 0
+    assert state.last_direction == 0
+    ledger.reconcile_reported(25, state)
+    assert ledger.accepted_w == 25
+    assert state.last_direction == 1
+    ledger.reconcile_reported(-25, state)
+    assert ledger.accepted_w == -25
+    assert state.last_direction == -1
+    ledger.reconcile_reported(-8, state)
+    assert ledger.accepted_w == 0
+    assert state.last_direction == 0
 
 
 def test_settling_starts_when_the_transport_call_completes() -> None:

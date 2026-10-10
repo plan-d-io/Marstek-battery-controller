@@ -42,6 +42,7 @@ reversal, never at a source timestamp that is already in the past.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Final
 
@@ -199,13 +200,28 @@ def reset_pd_state(state: PDState) -> None:
     state.last_proposed_w = None
 
 
+def require_kp(kp: float) -> None:
+    """Reject a proportional gain that is negative or not finite.
+
+    Zero is valid and adds no proportional correction. Gains above 1 stay
+    valid; one sample is still capped at an open-loop gain of 1.
+    """
+    try:
+        gain = float(kp)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"kp must be finite and nonnegative, got {kp!r}") from err
+    if not math.isfinite(gain) or gain < 0.0:
+        raise ValueError(f"kp must be finite and nonnegative, got {kp!r}")
+
+
 def note_accepted_command(state: PDState, command_w: int) -> None:
     """Remember direction from a command the transport actually accepted.
 
     A proposal never calls this. Accepting zero during a reversal hold keeps
     the last nonzero direction until the reversal finishes or is released.
+    A command of 1–24 W is normalized to zero before the direction is taken.
     """
-    command = int(command_w)
+    command = snap_noise_floor_command(int(command_w))
     if command > 0:
         state.last_direction = 1
         state.reversal_unlocked = False
@@ -242,7 +258,7 @@ def reanchor_pd_state(state: PDState, measured_power_w: float) -> None:
     state.opposite_since_mono = None
     state.zero_cross_holding = False
     state.reversal_unlocked = False
-    state.last_direction = _sign(measured_power_w)
+    state.last_direction = _sign(measured)
     state.last_slew_limited = False
     state.requested_w = measured
     state.last_proposed_w = measured
@@ -388,6 +404,7 @@ def pd_step(
     The baseline is ``state.requested_w``. The returned proposal is not
     accepted state, and it does not change ``last_direction``.
     """
+    require_kp(params.kp)
     if force_zero:
         if _can_integrate(
             state,
