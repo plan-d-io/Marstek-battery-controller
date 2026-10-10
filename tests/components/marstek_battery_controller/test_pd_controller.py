@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from custom_components.marstek_battery_controller.command_ledger import (
@@ -809,6 +811,58 @@ def test_kp_must_be_finite_and_nonnegative(kp: float) -> None:
         )
     assert state.grid_filtered is None
     assert state.requested_w == 0
+
+
+@pytest.mark.parametrize(
+    "kp",
+    [-1.0, float("nan"), float("inf"), float("-inf")],
+)
+def test_force_zero_releases_before_kp_validation(kp: float) -> None:
+    state = PDState()
+    state.requested_w = 400
+    state.last_direction = 1
+    state.opposite_since_mono = 1.0
+    state.zero_cross_holding = True
+    result = pd_step(
+        state,
+        PDParams(kp=kp),
+        grid_raw_w=500.0,
+        now_mono=2.0,
+        source_mono=2.0,
+        publication_id="safety",
+        force_zero=True,
+    )
+    assert result.proposed_command_w == 0
+    assert result.p_term == 0.0
+    assert result.reason_code == "operation_blocked"
+    assert state.requested_w == 0
+    assert state.last_proposed_w == 0
+    assert state.last_direction == 0
+    assert state.opposite_since_mono is None
+    assert state.zero_cross_holding is False
+
+
+def test_huge_finite_kp_stays_inside_the_open_loop_cap() -> None:
+    state = PDState()
+    state.last_integrate_mono = 0.0
+    result = pd_step(
+        state,
+        PDParams(
+            kp=1e308,
+            kd=0.0,
+            deadband_w=0.0,
+            direction_hysteresis_w=0.0,
+            max_power_change_w=1_000_000.0,
+            max_battery_power_w=1_000_000.0,
+        ),
+        grid_raw_w=1000.0,
+        now_mono=10.0,
+        source_mono=10.0,
+        publication_id="huge-kp",
+    )
+    assert math.isfinite(result.p_term)
+    assert result.p_term == pytest.approx(1000.0)
+    assert result.proposed_command_w == 1000
 
 
 def test_kp_zero_adds_no_proportional_correction() -> None:

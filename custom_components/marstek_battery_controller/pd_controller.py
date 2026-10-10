@@ -214,6 +214,21 @@ def require_kp(kp: float) -> None:
         raise ValueError(f"kp must be finite and nonnegative, got {kp!r}")
 
 
+def _proportional_gain(kp: float, p_scale: float) -> float:
+    """Return ``min(kp * p_scale, 1)`` without an overflowing product.
+
+    One sample cannot apply an open-loop gain above 1. Comparing ``kp`` with
+    ``1 / p_scale`` decides the cap before any multiplication, so a huge
+    finite ``kp`` cannot overflow ``kp * error`` on the way there. A step
+    whose uncapped product is already below 1 is left unchanged.
+    """
+    if kp <= 0.0 or p_scale <= 0.0:
+        return 0.0
+    if kp >= 1.0 / p_scale:
+        return 1.0
+    return kp * p_scale
+
+
 def note_accepted_command(state: PDState, command_w: int) -> None:
     """Remember direction from a command the transport actually accepted.
 
@@ -403,8 +418,10 @@ def pd_step(
 
     The baseline is ``state.requested_w``. The returned proposal is not
     accepted state, and it does not change ``last_direction``.
+
+    A safety release (``force_zero``) runs before gain validation. An invalid
+    ``kp`` must not block that release. Ordinary calculations still reject it.
     """
-    require_kp(params.kp)
     if force_zero:
         if _can_integrate(
             state,
@@ -432,6 +449,7 @@ def pd_step(
             reason_code="operation_blocked",
         )
 
+    require_kp(params.kp)
     if not fresh:
         return _read_only_result(
             state,
@@ -482,13 +500,8 @@ def pd_step(
 
     error = filtered - target_grid_w
     in_deadband = abs(error) <= deadband
-    p_scale = p_dt / NOMINAL_CYCLE_S
-    if params.kp > 0:
-        # p_term = kp * error * p_scale. Keep kp * p_scale <= 1 so one sample
-        # cannot apply an open-loop gain above 1, including when kp itself is
-        # greater than 1. The cap is 1/kp, not max(1, 1/kp): the latter lets
-        # kp > 1 through at a gain of kp.
-        p_scale = min(p_scale, 1.0 / params.kp)
+    # p_term = effective_gain * error, effective_gain = min(kp * p_scale, 1).
+    gain = _proportional_gain(params.kp, p_dt / NOMINAL_CYCLE_S)
 
     p_term = 0.0
     d_term = 0.0
@@ -516,7 +529,7 @@ def pd_step(
             d_term = 0.0
         state.derivative_ready = True
         state.suppress_derivative_once = False
-        p_term = params.kp * error * p_scale
+        p_term = gain * error
         raw_command = reference + p_term + d_term
         max_delta = params.max_power_change_w * (p_dt / NOMINAL_CYCLE_S)
         limited = _clamp(raw_command, reference - max_delta, reference + max_delta)
