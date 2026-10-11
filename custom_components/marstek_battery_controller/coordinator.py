@@ -10,7 +10,11 @@ import time as time_mod
 from typing import Any, Literal
 
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, State, callback
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue, async_delete_issue
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -30,16 +34,27 @@ from .pd_session import (
     BatteryControlSession,
     ChannelSample,
     ControlPlan,
+    ReportedObservation,
     SessionSettings,
     normalize_pd_grid_deadband,
     reported_command_w,
 )
+from .publications import DEFAULT_BATTERY_FRESH_S, DEFAULT_SOC_FRESH_S
 from .discovery import ResolvedEntities
 from .homewizard_poller import HomeWizardPoller
 from .smoothing import SlidingWindowMean
 from .storage import MarstekStorage
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _create_issue(hass: HomeAssistant, domain: str, issue_id: str, **kwargs: Any) -> None:
+    """Create a repairs issue, retrying without arguments this core does not accept."""
+    try:
+        async_create_issue(hass, domain, issue_id, **kwargs)
+    except TypeError:
+        kwargs.pop("breaks_invisibly", None)
+        async_create_issue(hass, domain, issue_id, **kwargs)
 
 
 def parse_optional_float_state(state: State | None) -> float | None:
@@ -79,6 +94,25 @@ class CoordinatorRuntimeConfig:
     monthly_peak_entity_id: str | None
     use_internal_cap_now: bool
     grid_power_poller: HomeWizardPoller | None = None
+
+
+class _Dispatch:
+    """One reserved battery write. Pending work lives here, not in a second submit."""
+
+    __slots__ = ("command_w", "safety", "reassert", "track_pd")
+
+    def __init__(
+        self,
+        command_w: int,
+        *,
+        safety: bool,
+        reassert: bool,
+        track_pd: bool,
+    ) -> None:
+        self.command_w = int(command_w)
+        self.safety = safety
+        self.reassert = reassert
+        self.track_pd = track_pd
 
 
 class _WriterTransport:
@@ -142,10 +176,18 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._modbus_consecutive_failures = 0
         self._modbus_breaker_until_mono: float | None = None
         self._released_cleanup_task: asyncio.Task[None] | None = None
+        self._released_cleanup_unsub: CALLBACK_TYPE | None = None
         self._command_task: asyncio.Task[None] | None = None
-        self._write_grace_until: datetime | None = None
+        self._active_dispatch: _Dispatch | None = None
+        self._queued_dispatch: _Dispatch | None = None
+        self._shutting_down = False
+        self._release_cleanup_owned = False
         self._session = BatteryControlSession()
         self._pd_deadband_w = const.DEFAULT_PD_GRID_DEADBAND_W
+        # Before any options-driven recalc or the first coordinator refresh.
+        self._write_grace_until: datetime | None = dt_util.utcnow() + timedelta(
+            seconds=const.RESTART_WRITE_GRACE_S
+        )
 
         # Must not shadow DataUpdateCoordinator._listeners (dict of entity update callbacks).
         self._state_change_unsubs: list[CALLBACK_TYPE] = []
@@ -201,9 +243,90 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._async_recalc()
 
     def set_mode(self, mode: str) -> None:
-        """Set operating mode (from UI)."""
+        """Set operating mode. Entering Released schedules cleanup once."""
+        if mode == const.MODE_RELEASED:
+            self._enter_released()
+            return
+        if self._mode == const.MODE_RELEASED:
+            self._release_cleanup_owned = False
+            self._cancel_released_wait()
         self._mode = mode
         self._async_recalc()
+
+    def ensure_released_cleanup(self) -> None:
+        """Schedule Released cleanup when startup or options left the mode Released."""
+        if self.current_mode == const.MODE_RELEASED:
+            self._schedule_released_cleanup()
+
+    def _enter_released(self) -> None:
+        """Switch to Released and schedule physical cleanup at most once per entry."""
+        self._mode = const.MODE_RELEASED
+        self._async_recalc()
+        self._schedule_released_cleanup()
+
+    def _schedule_released_cleanup(self) -> None:
+        """Start or defer Released cleanup. A second entry does not start another sequence."""
+        if self._shutting_down or self._release_cleanup_owned:
+            return
+        if self._released_cleanup_task is not None and not self._released_cleanup_task.done():
+            self._release_cleanup_owned = True
+            return
+        self._release_cleanup_owned = True
+        self._arm_released_cleanup()
+
+    def _arm_released_cleanup(self) -> None:
+        """Run cleanup now, or defer it until restart grace and the breaker are clear."""
+        if self._shutting_down or not self._release_cleanup_owned:
+            return
+        delay = self._cleanup_delay_s()
+        if delay > 0:
+            if self._released_cleanup_unsub is not None:
+                return
+            self._released_cleanup_unsub = async_call_later(
+                self.hass,
+                delay,
+                self._on_released_cleanup_due,
+            )
+            return
+        if self._released_cleanup_task is not None and not self._released_cleanup_task.done():
+            return
+        self._released_cleanup_task = self.hass.async_create_task(
+            self._async_released_cleanup_when_able()
+        )
+
+    @callback
+    def _on_released_cleanup_due(self, _now: datetime) -> None:
+        """Grace or breaker wait elapsed; run cleanup or defer again."""
+        self._released_cleanup_unsub = None
+        self._arm_released_cleanup()
+
+    def _cleanup_delay_s(self) -> float:
+        """Seconds to wait before a Released Modbus sequence may start."""
+        delay = 0.0
+        if self._write_grace_until is not None:
+            remaining = (self._write_grace_until - dt_util.utcnow()).total_seconds()
+            if remaining > 0:
+                delay = remaining
+            else:
+                self._write_grace_until = None
+        until = self._modbus_breaker_until_mono
+        if until is not None:
+            try:
+                loop_now = asyncio.get_running_loop().time()
+            except RuntimeError:
+                loop_now = time_mod.monotonic()
+            remaining_breaker = until - loop_now
+            if remaining_breaker > 0:
+                delay = max(delay, remaining_breaker)
+            else:
+                self._modbus_breaker_until_mono = None
+        return delay
+
+    def _cancel_released_wait(self) -> None:
+        """Drop a deferred Released cleanup that has not started Modbus yet."""
+        if self._released_cleanup_unsub is not None:
+            self._released_cleanup_unsub()
+            self._released_cleanup_unsub = None
 
     @property
     def current_mode(self) -> str:
@@ -417,19 +540,58 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # —— Lifecycle —————————————————————————————————————————————————————
 
     async def async_shutdown(self) -> None:
-        """Detach listeners."""
+        """Stop dispatch, finish or cancel Modbus work, then detach listeners."""
+        self._shutting_down = True
         self._cancel_tick()
-        if self._released_cleanup_task and not self._released_cleanup_task.done():
-            self._released_cleanup_task.cancel()
+        command_task = self._command_task
+        if command_task is not None and not command_task.done():
+            command_task.cancel()
             try:
-                await self._released_cleanup_task
+                await command_task
+            except asyncio.CancelledError:
+                pass
+        self._command_task = None
+        self._active_dispatch = None
+        self._queued_dispatch = None
+        self._cancel_released_wait()
+        cleanup_task = self._released_cleanup_task
+        if cleanup_task is not None and not cleanup_task.done():
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
             except asyncio.CancelledError:
                 pass
         self._released_cleanup_task = None
+        if self._owns_forced_battery():
+            try:
+                await asyncio.wait_for(
+                    self.writer.async_cleanup_released_sequence(),
+                    timeout=const.MODBUS_SEQUENCE_TIMEOUT_S,
+                )
+                self._session.note_release_finished(accepted=True)
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "Unload cleanup timed out after %ss",
+                    const.MODBUS_SEQUENCE_TIMEOUT_S,
+                )
+                self._session.note_release_finished(accepted=False)
+            except Exception as err:
+                _LOGGER.warning("Unload cleanup failed: %s", err)
+                self._session.note_release_finished(accepted=False)
         for unsub in self._state_change_unsubs:
             unsub()
         self._state_change_unsubs.clear()
         await super().async_shutdown()
+
+    def _owns_forced_battery(self) -> bool:
+        """True when this entry may still be holding the battery in force mode."""
+        if self.writer.rs485_on:
+            return True
+        if self._session.ledger.delivery_uncertain or self._session.ledger.in_flight_w is not None:
+            return True
+        if self._session.ledger.accepted_w != 0:
+            return True
+        return self._mode != const.MODE_RELEASED
 
     def async_setup_listeners(self) -> None:
         """Subscribe to relevant entity state changes."""
@@ -456,13 +618,12 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             async_track_state_change_event(self.hass, entities, _on_state)
         )
 
-        self._write_grace_until = dt_util.utcnow() + timedelta(seconds=const.RESTART_WRITE_GRACE_S)
-        _LOGGER.info(
-            "Restart grace: Modbus writes deferred until %s",
-            self._write_grace_until,
-        )
-
         self._schedule_tick()
+        if self._write_grace_until is not None:
+            _LOGGER.info(
+                "Restart grace: Modbus writes deferred until %s",
+                self._write_grace_until,
+            )
         if self._reserve_protection_time >= self._peak_window_time:
             _LOGGER.warning(
                 "Reserve protection start is not before peak window start; "
@@ -482,11 +643,10 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         prev = self.previous_mode or const.MODE_RELEASED
         _LOGGER.info("Manual auto-exit: restoring mode %s", prev)
-        self._mode = prev
         self.previous_mode = None
         await self.storage.async_save_previous_mode(None)
         self.persist_entry_options(self.hass, self.entry_id)
-        self._async_recalc()
+        self.set_mode(prev)
         self.async_update_listeners()
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -570,7 +730,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "Forcing Released after prolonged unavailability: %s",
                         key,
                     )
-                    async_create_issue(
+                    _create_issue(
                         hass,
                         const.DOMAIN,
                         f"{const.DOMAIN}_{self.entry_id}_sensor",
@@ -580,12 +740,13 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         translation_key="sensor_unavailable",
                         translation_placeholders={"name": key},
                     )
-                    self._mode = const.MODE_RELEASED
+                    self.set_mode(const.MODE_RELEASED)
                     self.async_update_listeners()
-                    self.hass.async_create_task(self.async_schedule_released_cleanup())
 
+        now_wall = dt_util.utcnow()
+        soc_fresh = self._telemetry_is_fresh(soc_st, now_wall, DEFAULT_SOC_FRESH_S)
         _mark_bad("grid", bool(grid_ok))
-        _mark_bad("soc", bool(soc_ok))
+        _mark_bad("soc", soc_fresh)
         _mark_bad("battery_ac", bool(batt_ok))
 
         ts = now.timestamp()
@@ -670,13 +831,14 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             latest_start_charge=latest,
             peak_window_deadline=deadline,
             now=now,
+            soc_fresh=soc_fresh,
         )
         plan = self._session.plan(
             settings,
             now_mono=now_mono,
             grid=self._grid_sample(poller, grid_st, now_mono, now_wall),
             battery=self._channel_sample(batt_st if batt_ok else None, now_mono, now_wall),
-            reported_command_w=self._reported_battery_command(),
+            reported=self._reported_observation(now_mono, now_wall),
             opportunity=opportunity,
         )
         self.last_calc_output = CalculatorOutput(
@@ -745,6 +907,108 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             wall_age_s=age,
         )
 
+    def _telemetry_is_fresh(self, state: Any, now_wall: datetime, limit_s: float) -> bool:
+        """True when a state string is present and its publication is still inside the limit."""
+        if state is None or state.state in ("unknown", "unavailable", None, ""):
+            return False
+        _publication_id, observed, fresh = self._state_observation(
+            state,
+            time_mod.monotonic(),
+            now_wall,
+            limit_s,
+        )
+        return fresh and observed is not None
+
+    def _state_observation(
+        self,
+        state: Any,
+        now_mono: float,
+        now_wall: datetime,
+        limit_s: float,
+    ) -> tuple[str | None, float | None, bool]:
+        """Publication id, monotonic observation time, and freshness for one entity state."""
+        if state is None or state.state in ("unknown", "unavailable", None, ""):
+            return None, None, False
+        stamp = getattr(state, "last_reported", None) or getattr(state, "last_updated", None)
+        if stamp is None:
+            return None, None, False
+        try:
+            age = max(0.0, (now_wall - stamp).total_seconds())
+            publication_id = f"{state.entity_id}:{stamp.timestamp()}"
+        except (TypeError, AttributeError, OSError, ValueError):
+            return None, None, False
+        return publication_id, now_mono - age, age <= limit_s
+
+    def _reported_observation(self, now_mono: float, now_wall: datetime) -> ReportedObservation:
+        """Build a publication-aware battery command readback.
+
+        An active charge or discharge mode with a missing setpoint is incoherent.
+        That observation stays unknown and is not published as 0 W.
+        """
+        resolved = self.runtime.resolved
+        mode_state = self.hass.states.get(resolved.force_mode)
+        charge_state = self.hass.states.get(resolved.set_charge_power)
+        discharge_state = self.hass.states.get(resolved.set_discharge_power)
+        mode_name = None
+        if mode_state is not None and mode_state.state not in (
+            "unknown",
+            "unavailable",
+            None,
+            "",
+        ):
+            mode_name = str(mode_state.state)
+        charge = parse_optional_float_state(charge_state)
+        discharge = parse_optional_float_state(discharge_state)
+        command = reported_command_w(mode_name, charge, discharge) if mode_name else None
+        lowered = (mode_name or "").strip().lower()
+        if lowered in {"stop", "standby", "neutral", "off", "idle"}:
+            parts = [mode_state]
+            coherent = command == 0
+        elif lowered == const.FORCE_CHARGE:
+            parts = [mode_state, charge_state]
+            coherent = command is not None
+        elif lowered == const.FORCE_DISCHARGE:
+            parts = [mode_state, discharge_state]
+            coherent = command is not None
+        else:
+            return ReportedObservation(
+                command_w=None,
+                publication_id=None,
+                observed_mono=None,
+                fresh=False,
+                coherent=False,
+            )
+        ids: list[str] = []
+        monos: list[float] = []
+        fresh = True
+        for part in parts:
+            publication_id, observed, part_fresh = self._state_observation(
+                part,
+                now_mono,
+                now_wall,
+                DEFAULT_BATTERY_FRESH_S,
+            )
+            if publication_id is None or observed is None or not part_fresh:
+                fresh = False
+                continue
+            ids.append(publication_id)
+            monos.append(observed)
+        if not coherent or not fresh or not ids:
+            return ReportedObservation(
+                command_w=command if coherent else None,
+                publication_id=None,
+                observed_mono=None,
+                fresh=False,
+                coherent=coherent and fresh,
+            )
+        return ReportedObservation(
+            command_w=command,
+            publication_id="|".join(ids),
+            observed_mono=min(monos),
+            fresh=True,
+            coherent=True,
+        )
+
     def _reported_battery_command(self) -> int | None:
         """Signed watts reported by the Marstek force mode and power numbers."""
         resolved = self.runtime.resolved
@@ -768,41 +1032,45 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._modbus_breaker_blocks()
 
     def _dispatch_plan(self, plan: ControlPlan) -> None:
-        """Start one write, or queue it behind the write already in flight."""
-        if plan.send_w is None:
+        """Reserve one write synchronously, then start the task that submits it."""
+        if self._shutting_down or plan.send_w is None or self._writes_blocked():
             return
-        task = self._command_task
-        if task is not None and not task.done():
-            if plan.send_w != self._session.ledger.in_flight_w:
-                self._session.ledger.submit(
-                    plan.send_w,
-                    safety=plan.safety,
-                    reassert=plan.reassert,
-                )
+        spec = _Dispatch(
+            plan.send_w,
+            safety=plan.safety,
+            reassert=plan.reassert,
+            track_pd=plan.kind == "pd",
+        )
+        if self._active_dispatch is not None:
+            if spec.command_w == self._active_dispatch.command_w:
+                self._queued_dispatch = None
+            else:
+                self._queued_dispatch = spec
             return
-        self._command_task = self.hass.async_create_task(self._async_write_command(plan))
+        self._active_dispatch = spec
+        self._queued_dispatch = None
+        self._command_task = self.hass.async_create_task(self._async_write_command())
 
-    async def _async_write_command(self, plan: ControlPlan) -> None:
-        """Send the planned command and then the newest command queued behind it."""
-        command: int | None = plan.send_w
-        safety = plan.safety
-        reassert = plan.reassert
-        pd_state = self._session.pd if plan.kind == "pd" else None
+    async def _async_write_command(self) -> None:
+        """Send the reserved command, then at most the newest command queued behind it."""
         try:
-            while command is not None:
-                if self._session.release_requested:
-                    self._session.ledger.discard_pending()
+            while self._active_dispatch is not None:
+                if self._shutting_down or self._session.release_requested:
+                    self._queued_dispatch = None
+                    self._active_dispatch = None
                     return
+                spec = self._active_dispatch
+                pd_state = self._session.pd if spec.track_pd else None
                 try:
                     result = await asyncio.wait_for(
                         deliver_command(
                             _WriterTransport(self.writer),
                             self._session.ledger,
-                            command,
+                            spec.command_w,
                             time_mod.monotonic(),
                             pd_state=pd_state,
-                            safety=safety,
-                            reassert=reassert,
+                            safety=spec.safety,
+                            reassert=spec.reassert,
                         ),
                         timeout=const.MODBUS_SEQUENCE_TIMEOUT_S,
                     )
@@ -812,6 +1080,8 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         const.MODBUS_SEQUENCE_TIMEOUT_S,
                     )
                     self._record_modbus_sequence_failure(None)
+                    self._active_dispatch = None
+                    self._queued_dispatch = None
                     return
                 except asyncio.CancelledError:
                     raise
@@ -820,27 +1090,33 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._record_modbus_sequence_success()
                     _LOGGER.debug("Modbus write OK: setpoint=%s W", result.sent_w)
                 elif result.queued:
-                    pass
+                    _LOGGER.debug(
+                        "Reserved command %s was already in flight",
+                        spec.command_w,
+                    )
                 elif (
                     not result.uncertain
-                    and command == self._session.ledger.accepted_w
-                    and not safety
-                    and not reassert
+                    and spec.command_w == self._session.ledger.accepted_w
+                    and not spec.safety
+                    and not spec.reassert
                 ):
                     pass
                 else:
                     self._record_modbus_sequence_failure(None)
-                    if self._session.ledger.pending_w is None:
-                        return
-                if self._session.release_requested or self._session.ledger.pending_w is None:
-                    if self._session.release_requested:
-                        self._session.ledger.discard_pending()
+                if self._shutting_down or self._session.release_requested:
+                    self._queued_dispatch = None
+                    self._active_dispatch = None
                     return
-                command = self._session.ledger.pending_w
-                safety = self._session.ledger.pending_safety
-                reassert = False
-                pd_state = self._session.pd if self._session.kind == "pd" else None
+                nxt = self._queued_dispatch
+                self._queued_dispatch = None
+                if nxt is None or (
+                    nxt.command_w == spec.command_w and not nxt.safety and not nxt.reassert
+                ):
+                    self._active_dispatch = None
+                    return
+                self._active_dispatch = nxt
         finally:
+            self._command_task = None
             self.async_update_listeners()
 
     def _modbus_breaker_blocks(self) -> bool:
@@ -879,7 +1155,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "Modbus circuit breaker open for %ss (no writes/cleanup until cooldown)",
             const.MODBUS_CIRCUIT_COOLDOWN_S,
         )
-        async_create_issue(
+        _create_issue(
             self.hass,
             const.DOMAIN,
             f"{const.DOMAIN}_{self.entry_id}_modbus",
@@ -897,19 +1173,11 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._async_run_calculator(opportunity=True)
 
     async def async_schedule_released_cleanup(self) -> None:
-        """Cancel any in-flight Released cleanup and run cleanup when the circuit allows."""
-        if self._released_cleanup_task and not self._released_cleanup_task.done():
-            self._released_cleanup_task.cancel()
-            try:
-                await self._released_cleanup_task
-            except asyncio.CancelledError:
-                pass
-        self._released_cleanup_task = self.hass.async_create_task(
-            self._async_released_cleanup_when_able()
-        )
+        """Schedule Released cleanup once. A running sequence is left in place."""
+        self._schedule_released_cleanup()
 
     async def _async_released_cleanup_when_able(self) -> None:
-        """Wait out Modbus cooldown, then run full Released cleanup with timeout."""
+        """Wait out restart grace and Modbus cooldown, then run full Released cleanup."""
         self._session.prepare_release()
         command_task = self._command_task
         if command_task is not None and not command_task.done():
@@ -919,23 +1187,15 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 raise
             except Exception:
                 _LOGGER.debug("In-flight command ended during release", exc_info=True)
-        loop = asyncio.get_running_loop()
         try:
-            while True:
-                until = self._modbus_breaker_until_mono
-                if until is None:
-                    break
-                now = loop.time()
-                if now >= until:
-                    self._modbus_breaker_until_mono = None
-                    break
-                await asyncio.sleep(min(1.0, max(0.05, until - now)))
-
+            if self._shutting_down:
+                return
             if self._mode != const.MODE_RELEASED:
-                _LOGGER.debug("Released cleanup skipped: mode is %s", self._mode)
                 self._session.release_requested = False
                 return
-
+            if self._cleanup_delay_s() > 0:
+                self._arm_released_cleanup()
+                return
             _LOGGER.info("Running Released cleanup sequence")
             await asyncio.wait_for(
                 self.writer.async_cleanup_released_sequence(),

@@ -64,6 +64,8 @@ def reported_command_w(
 
     Neutral, stop and standby are 0 W. Force discharge is the positive
     discharge setpoint. Force charge is the negative charge setpoint.
+    A missing setpoint for an active charge or discharge mode is unknown,
+    not 0 W.
     """
     if force_mode is None:
         return None
@@ -71,10 +73,13 @@ def reported_command_w(
     if mode in _NEUTRAL_FORCE_MODES:
         return 0
     if mode == const.FORCE_DISCHARGE:
-        return max(0, int(round(float(discharge_w or 0.0))))
+        if discharge_w is None:
+            return None
+        return max(0, int(round(float(discharge_w))))
     if mode == const.FORCE_CHARGE:
-        magnitude = max(0, int(round(float(charge_w or 0.0))))
-        return -magnitude
+        if charge_w is None:
+            return None
+        return -max(0, int(round(float(charge_w))))
     return None
 
 
@@ -102,6 +107,19 @@ class SessionSettings:
     latest_start_charge: datetime | Literal["no_need"]
     peak_window_deadline: datetime
     now: datetime
+    # False when SoC has no fresh publication. Permissions must not use it.
+    soc_fresh: bool = True
+
+
+@dataclass(frozen=True)
+class ReportedObservation:
+    """One coherent device readback, or an explicit unknown."""
+
+    command_w: int | None
+    publication_id: str | None
+    observed_mono: float | None
+    fresh: bool
+    coherent: bool
 
 
 @dataclass(frozen=True)
@@ -304,6 +322,7 @@ class BatteryControlSession:
         self.publications = PublicationTracker()
         self.kind: str | None = None
         self.release_requested = False
+        self._last_reported_id: str | None = None
 
     def pd_params(self, settings: SessionSettings) -> PDParams:
         """Send interval is the ordinary opportunity gate. Deadband is the entity."""
@@ -331,6 +350,94 @@ class BatteryControlSession:
         reset_pd_state(self.pd)
         self.kind = "released"
 
+    def consider_reported(self, observation: ReportedObservation, *, now_mono: float) -> bool:
+        """Adopt one new coherent readback. Stale or older telemetry is ignored.
+
+        ``now_mono`` is unused; the observation already carries its monotonic time.
+        """
+        del now_mono
+        if (
+            not observation.coherent
+            or not observation.fresh
+            or observation.command_w is None
+            or observation.publication_id is None
+            or observation.observed_mono is None
+            or self.ledger.in_flight_w is not None
+        ):
+            return False
+        if observation.publication_id == self._last_reported_id:
+            return False
+        if (
+            self.ledger.last_success_mono is not None
+            and observation.observed_mono + 1e-9 < self.ledger.last_success_mono
+        ):
+            return False
+        pd_state = self.pd if self.kind == "pd" else None
+        self.ledger.reconcile_reported(int(observation.command_w), pd_state)
+        self._last_reported_id = observation.publication_id
+        return True
+
+    def _ingest_reported(
+        self,
+        observation: ReportedObservation | None,
+        reported_command_w: int | None,
+        *,
+        now_mono: float,
+    ) -> int | None:
+        """Return the command decide should compare against."""
+        if observation is not None:
+            self.consider_reported(observation, now_mono=now_mono)
+            return self.ledger.accepted_w
+        if reported_command_w is None or self.ledger.in_flight_w is not None:
+            return None
+        if self.kind == "pd":
+            self.ledger.reconcile_reported(reported_command_w, self.pd)
+        else:
+            self.ledger.reconcile_reported(reported_command_w, None)
+        return int(reported_command_w)
+
+    def _safety_zero_plan(
+        self,
+        settings: SessionSettings,
+        *,
+        now_mono: float,
+        battery: ChannelSample,
+        reported_for_decide: int | None,
+    ) -> ControlPlan:
+        """Command zero without using a stale SoC as permission to keep power."""
+        reported = (
+            self.ledger.accepted_w
+            if reported_for_decide is None
+            else int(reported_for_decide)
+        )
+        battery_fresh = self.publications.battery_is_fresh(now_mono)
+        decision = decide_actuator_write(
+            requested_w=0,
+            reported_command_w=reported,
+            measured_power_w=None if battery.value_w is None else float(battery.value_w),
+            measured_fresh=battery_fresh and battery.available and battery.value_w is not None,
+            now_mono=now_mono,
+            last_change_mono=self.ledger.last_success_mono,
+            actuator_latency_s=self.pd_params(settings).battery_actuator_latency_s,
+        )
+        send_w = None
+        safety = False
+        reassert = False
+        if decision.action in ("write", "reassert"):
+            send_w = decision.command_w
+            safety = True
+            reassert = decision.action == "reassert"
+        return self._plan(
+            kind=self.kind or "pd",
+            proposed_w=0,
+            send_w=send_w,
+            safety=safety,
+            reassert=reassert,
+            release=False,
+            operating_state=_state_for_mode(settings.mode),
+            reason_code=const.REASON_NORMAL,
+        )
+
     def plan(
         self,
         settings: SessionSettings,
@@ -338,20 +445,18 @@ class BatteryControlSession:
         now_mono: float,
         grid: ChannelSample,
         battery: ChannelSample,
-        reported_command_w: int | None,
-        opportunity: bool,
+        reported_command_w: int | None = None,
+        reported: ReportedObservation | None = None,
+        opportunity: bool = True,
     ) -> ControlPlan:
         """Publish inputs, apply policy, and choose at most one command to send."""
         self._publish("grid", grid, now_mono)
         self._publish("battery", battery, now_mono)
-        if (
-            reported_command_w is not None
-            and self.kind == "pd"
-            and self.ledger.in_flight_w is None
-        ):
-            self.ledger.reconcile_reported(reported_command_w, self.pd)
-        elif reported_command_w is not None and self.ledger.in_flight_w is None:
-            self.ledger.reconcile_reported(reported_command_w, None)
+        reported_for_decide = self._ingest_reported(
+            reported,
+            reported_command_w,
+            now_mono=now_mono,
+        )
 
         if settings.mode == const.MODE_RELEASED or settings.mode not in _PD_MODES | {
             const.MODE_MANUAL
@@ -369,29 +474,17 @@ class BatteryControlSession:
                     reason_code=const.REASON_RELEASED,
                 )
 
-        grid_fresh = self.publications.grid_is_fresh(now_mono)
-        if not settings.soc_sensor_ok and settings.mode != const.MODE_RELEASED:
-            if grid_fresh:
-                return self._plan(
-                    kind=self.kind or "pd",
-                    proposed_w=self.pd.requested_w,
-                    send_w=None,
-                    safety=False,
-                    reassert=False,
-                    release=False,
-                    operating_state=_state_for_mode(settings.mode),
-                    reason_code=const.REASON_NORMAL,
-                )
-            policy = OperatingPolicy(
-                kind="pd",
-                fixed_command_w=0,
-                allow_charge=True,
-                allow_discharge=True,
-                operating_state=_state_for_mode(settings.mode),
-                reason_code=const.REASON_NORMAL,
+        if settings.mode != const.MODE_RELEASED and not (
+            settings.soc_sensor_ok and settings.soc_fresh
+        ):
+            return self._safety_zero_plan(
+                settings,
+                now_mono=now_mono,
+                battery=battery,
+                reported_for_decide=reported_for_decide,
             )
-        else:
-            policy = operating_policy(settings)
+
+        policy = operating_policy(settings)
         if self.kind in _FROZEN_KINDS and policy.kind == "pd":
             self._reanchor_to_battery(now_mono)
         if self.kind is not None and policy.kind != self.kind:
@@ -440,7 +533,7 @@ class BatteryControlSession:
                 measured_power_w=None if battery.value_w is None else float(battery.value_w),
                 measured_fresh=battery_fresh and battery.available,
                 now_mono=now_mono,
-                reported_command_w=reported_command_w,
+                reported_command_w=reported_for_decide,
                 publication_id=battery.publication_id,
                 source_mono=self.publications.battery.source_mono,
             )
@@ -459,8 +552,8 @@ class BatteryControlSession:
             operating_state = const.STATE_SELF_CONSUMPTION
 
         reported = (
-            int(reported_command_w)
-            if reported_command_w is not None
+            int(reported_for_decide)
+            if reported_for_decide is not None
             else self.ledger.accepted_w
         )
         battery_fresh = self.publications.battery_is_fresh(now_mono)

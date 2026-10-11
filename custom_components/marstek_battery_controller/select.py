@@ -70,13 +70,6 @@ class MarstekModeSelect(CoordinatorEntity[MarstekBatteryCoordinator], SelectEnti
             coord.previous_mode = None
             await coord.storage.async_save_previous_mode(None)
 
-        if option == const.MODE_RELEASED and old != const.MODE_RELEASED:
-            coord.set_mode(const.MODE_RELEASED)
-            coord.persist_entry_options(self.hass, self._entry_id)
-            self.async_write_ha_state()
-            self.hass.async_create_task(coord.async_schedule_released_cleanup())
-            return
-
         coord.set_mode(option)
         coord.persist_entry_options(self.hass, self._entry_id)
         self.async_write_ha_state()

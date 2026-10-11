@@ -464,6 +464,63 @@ def test_reported_command_reconstruction(
 def test_unknown_force_mode_is_not_adopted() -> None:
     assert reported_command_w(None, 10, 10) is None
     assert reported_command_w("auto", 10, 10) is None
+    assert reported_command_w("charge", None, 400) is None
+    assert reported_command_w("discharge", 400, None) is None
+
+
+def test_stale_soc_sends_safety_zero_without_advancing_pd() -> None:
+    """A stale SoC must not keep a frozen charge or discharge permission."""
+    from custom_components.marstek_battery_controller.pd_session import ReportedObservation
+
+    session = BatteryControlSession()
+    session.pd.requested_w = 400
+    session.pd.grid_filtered_w = 1000.0
+    session.pd.last_integrate_mono = 3.0
+    session.kind = "pd"
+    plan = _plan(
+        session,
+        _settings(soc_fresh=False),
+        now_mono=20.0,
+        reported=400,
+        battery=_battery(400.0, "b1", 20.0),
+    )
+    assert plan.proposed_w == 0
+    assert plan.send_w == 0
+    assert plan.safety is True
+    assert plan.release is False
+    assert session.pd.requested_w == 400
+    assert session.pd.last_integrate_mono == 3.0
+    stale = ReportedObservation(
+        command_w=0,
+        publication_id="old",
+        observed_mono=1.0,
+        fresh=False,
+        coherent=True,
+    )
+    session.ledger.last_success_mono = 10.0
+    session.ledger.accepted_w = 400
+    assert session.consider_reported(stale, now_mono=20.0) is False
+    assert session.ledger.accepted_w == 400
+    older = ReportedObservation(
+        command_w=0,
+        publication_id="older-than-write",
+        observed_mono=9.0,
+        fresh=True,
+        coherent=True,
+    )
+    assert session.consider_reported(older, now_mono=20.0) is False
+    assert session.ledger.accepted_w == 400
+    assert session.pd.last_direction == 1
+    external = ReportedObservation(
+        command_w=-250,
+        publication_id="external",
+        observed_mono=11.0,
+        fresh=True,
+        coherent=True,
+    )
+    assert session.consider_reported(external, now_mono=20.0) is True
+    assert session.ledger.accepted_w == -250
+    assert session.pd.last_direction == -1
 
 
 @pytest.mark.parametrize(

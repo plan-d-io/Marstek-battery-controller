@@ -161,6 +161,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     _apply_options(coordinator, entry.options)
+    coordinator.ensure_released_cleanup()
 
     poller: HomeWizardPoller | None = None
     if grid_source_type == const.GRID_SOURCE_HOMEWIZARD_FAST_POLL:
@@ -211,6 +212,7 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
     coordinator: MarstekBatteryCoordinator = hass.data[const.DOMAIN][entry.entry_id]
     _apply_options(coordinator, entry.options)
+    coordinator.ensure_released_cleanup()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
