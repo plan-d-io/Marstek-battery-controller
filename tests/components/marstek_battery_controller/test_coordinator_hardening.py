@@ -614,3 +614,96 @@ async def test_open_breaker_drops_queued_command(hass, monkeypatch: pytest.Monke
     coordinator._dispatch_plan(_command(300))
     await hass.async_block_till_done()
     assert writer.sends == [100, 300]
+
+
+async def test_mode_change_during_cleanup_wait_dispatches_immediately(hass) -> None:
+    """An active mode chosen while cleanup waits is calculated as soon as that wait ends."""
+    coordinator, writer = await _coordinator(hass)
+    _allow_writes(coordinator)
+    _publish(hass, grid="1000", soc="40", battery="0", force="stop")
+    coordinator.set_pd_grid_deadband(0)
+    coordinator.set_manual_target_soc(90)
+    coordinator.set_manual_power(800)
+    await hass.async_block_till_done()
+    assert writer.sends == []
+
+    order: list[object] = []
+    busy = {"send": 0, "cleanup": 0, "overlap": 0}
+
+    async def send(setpoint_w: int) -> None:
+        watts = int(setpoint_w)
+        order.append(("send-start", watts))
+        writer.sends.append(watts)
+        busy["send"] += 1
+        if busy["cleanup"]:
+            busy["overlap"] += 1
+        writer.started.set()
+        try:
+            if writer.block:
+                writer.active += 1
+                await writer.release.wait()
+                writer.active -= 1
+        finally:
+            busy["send"] -= 1
+        order.append(("send-end", watts))
+
+    async def cleanup() -> None:
+        order.append("cleanup-start")
+        writer.cleanups += 1
+        busy["cleanup"] += 1
+        if busy["send"]:
+            busy["overlap"] += 1
+        try:
+            writer.rs485_on = False
+        finally:
+            busy["cleanup"] -= 1
+            order.append("cleanup-end")
+
+    writer.async_send_setpoint = send  # type: ignore[method-assign]
+    writer.async_cleanup_released_sequence = cleanup  # type: ignore[method-assign]
+    writer.block = True
+    coordinator.set_mode(const.MODE_SELF_CONSUMPTION)
+    await asyncio.wait_for(writer.started.wait(), timeout=2)
+    first = writer.sends[0]
+    assert first > 0
+    assert coordinator._command_task is not None
+
+    coordinator.set_mode(const.MODE_RELEASED)
+    waiting = False
+    for _ in range(20):
+        task = coordinator._released_cleanup_task
+        if (
+            task is not None
+            and not task.done()
+            and coordinator._session.release_requested
+            and not coordinator._cleanup_physical
+            and writer.cleanups == 0
+        ):
+            waiting = True
+            break
+        await asyncio.sleep(0)
+    assert waiting is True
+
+    coordinator.set_mode(const.MODE_SELF_CONSUMPTION)
+    coordinator.set_mode(const.MODE_MANUAL)
+    coordinator._dispatch_plan(_command(250))
+    assert coordinator._mode == const.MODE_RELEASED
+    assert coordinator._mode_after_cleanup == const.MODE_MANUAL
+    assert coordinator._queued_dispatch is None
+    assert writer.cleanups == 0
+
+    writer.block = False
+    writer.release.set()
+    await hass.async_block_till_done()
+
+    assert writer.cleanups == 0
+    assert busy["overlap"] == 0
+    assert "cleanup-start" not in order
+    assert coordinator._mode == const.MODE_MANUAL
+    assert writer.sends == [first, -800]
+    assert order.index(("send-end", first)) < order.index(("send-start", -800))
+    assert coordinator._queued_dispatch is None
+    assert coordinator._active_dispatch is None
+    assert coordinator._session.ledger.pending_w is None
+    assert coordinator._session.release_requested is False
+    assert coordinator._released_cleanup_task is None

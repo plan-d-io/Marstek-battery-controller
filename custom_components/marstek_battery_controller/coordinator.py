@@ -252,11 +252,23 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._mode_after_cleanup = None
             self._enter_released()
             return
-        if self._cleanup_physical:
-            # The Modbus sequence already started. Finish it, then apply this mode.
+        if self._released_cleanup_active():
+            # The cleanup task owns the transition, including its wait for an
+            # in-flight command. Keep the newest mode and do not queue a write.
             self._mode_after_cleanup = mode
+            self._queued_dispatch = None
             return
         self._leave_released_now(mode)
+
+    def _released_cleanup_active(self) -> bool:
+        """True for the whole Released cleanup task, before and during Modbus."""
+        task = self._released_cleanup_task
+        return task is not None and not task.done()
+
+    def _release_cleanup_exclusivity(self) -> None:
+        """Let a handoff dispatch. A deferred timer is not a running cleanup."""
+        if self._released_cleanup_task is asyncio.current_task():
+            self._released_cleanup_task = None
 
     def _leave_released_now(self, mode: str) -> None:
         """Leave Released when no physical cleanup is on the wire."""
@@ -1060,7 +1072,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Reserve one write synchronously, then start the task that submits it."""
         if (
             self._shutting_down
-            or self._cleanup_physical
+            or self._released_cleanup_active()
             or plan.send_w is None
             or self._writes_blocked()
         ):
@@ -1226,6 +1238,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Run one Released cleanup. A failure arms a single later retry."""
         try:
             self._session.prepare_release()
+            self._queued_dispatch = None
             command_task = self._command_task
             if command_task is not None and not command_task.done():
                 try:
@@ -1237,9 +1250,8 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             try:
                 if self._shutting_down:
                     return
-                if self._mode != const.MODE_RELEASED:
-                    self._session.release_requested = False
-                    self._release_cleanup_owned = False
+                if self._mode_after_cleanup is not None or self._mode != const.MODE_RELEASED:
+                    self._finish_cleanup_attempt(success=True)
                     return
                 if self._cleanup_delay_s() > 0:
                     self._arm_released_cleanup()
@@ -1309,15 +1321,17 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         pending = self._mode_after_cleanup
         self._mode_after_cleanup = None
         self._cleanup_physical = False
-        if pending is not None:
+        if pending is not None or self._mode != const.MODE_RELEASED:
             self._release_cleanup_owned = False
             self._inherited_released_uncertainty = False
             self._cancel_released_wait()
             self._session.release_requested = False
-            self._mode = pending
+            if pending is not None:
+                self._mode = pending
+            self._release_cleanup_exclusivity()
             self._async_recalc()
             return
-        if success or self._shutting_down or self._mode != const.MODE_RELEASED:
+        if success or self._shutting_down:
             return
         self._arm_released_retry()
 
