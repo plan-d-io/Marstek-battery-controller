@@ -323,6 +323,8 @@ class BatteryControlSession:
         self.kind: str | None = None
         self.release_requested = False
         self._last_reported_id: str | None = None
+        self._stale_soc_zero_latched = False
+        self.explicit_stale_zero = False
 
     def pd_params(self, settings: SessionSettings) -> PDParams:
         """Send interval is the ordinary opportunity gate. Deadband is the entity."""
@@ -349,6 +351,16 @@ class BatteryControlSession:
         self.ledger.uncertain_command_w = None
         reset_pd_state(self.pd)
         self.kind = "released"
+
+    def note_stale_soc_zero_attempted(self) -> None:
+        """One explicit zero is enough until SoC recovers or the attempt fails."""
+        self._stale_soc_zero_latched = True
+        self.explicit_stale_zero = False
+
+    def note_stale_soc_zero_failed(self) -> None:
+        """A failed zero stays eligible for another attempt after the breaker."""
+        self._stale_soc_zero_latched = False
+        self.explicit_stale_zero = False
 
     def consider_reported(self, observation: ReportedObservation, *, now_mono: float) -> bool:
         """Adopt one new coherent readback. Stale or older telemetry is ignored.
@@ -383,18 +395,30 @@ class BatteryControlSession:
         reported_command_w: int | None,
         *,
         now_mono: float,
-    ) -> int | None:
-        """Return the command decide should compare against."""
+    ) -> tuple[int | None, bool]:
+        """Return the command decide should compare against, and whether it is known.
+
+        An incoherent or stale observation is unknown. It is not replaced with
+        the last software-accepted command.
+        """
         if observation is not None:
-            self.consider_reported(observation, now_mono=now_mono)
-            return self.ledger.accepted_w
+            adopted = self.consider_reported(observation, now_mono=now_mono)
+            known = bool(
+                observation.coherent
+                and observation.fresh
+                and observation.command_w is not None
+                and self.ledger.in_flight_w is None
+            )
+            if adopted or known:
+                return self.ledger.accepted_w, True
+            return None, False
         if reported_command_w is None or self.ledger.in_flight_w is not None:
-            return None
+            return None, False
         if self.kind == "pd":
             self.ledger.reconcile_reported(reported_command_w, self.pd)
         else:
             self.ledger.reconcile_reported(reported_command_w, None)
-        return int(reported_command_w)
+        return int(reported_command_w), True
 
     def _safety_zero_plan(
         self,
@@ -403,14 +427,45 @@ class BatteryControlSession:
         now_mono: float,
         battery: ChannelSample,
         reported_for_decide: int | None,
+        reported_known: bool,
     ) -> ControlPlan:
         """Command zero without using a stale SoC as permission to keep power."""
-        reported = (
-            self.ledger.accepted_w
-            if reported_for_decide is None
-            else int(reported_for_decide)
-        )
+        self.explicit_stale_zero = False
         battery_fresh = self.publications.battery_is_fresh(now_mono)
+        battery_known = bool(
+            battery_fresh and battery.available and battery.value_w is not None
+        )
+        if not reported_known and not battery_known:
+            if self._stale_soc_zero_latched:
+                return self._plan(
+                    kind=self.kind or "pd",
+                    proposed_w=0,
+                    send_w=None,
+                    safety=False,
+                    reassert=False,
+                    release=False,
+                    operating_state=_state_for_mode(settings.mode),
+                    reason_code=const.REASON_NORMAL,
+                )
+            self.explicit_stale_zero = True
+            return self._plan(
+                kind=self.kind or "pd",
+                proposed_w=0,
+                send_w=0,
+                safety=True,
+                reassert=False,
+                release=False,
+                operating_state=_state_for_mode(settings.mode),
+                reason_code=const.REASON_NORMAL,
+            )
+        if reported_known and reported_for_decide is not None:
+            reported = int(reported_for_decide)
+        elif battery_known and battery.value_w is not None:
+            reported = 0 if abs(float(battery.value_w)) < 25 else int(round(float(battery.value_w)))
+        else:
+            reported = 0
+        if reported_known and reported == 0:
+            self._stale_soc_zero_latched = True
         decision = decide_actuator_write(
             requested_w=0,
             reported_command_w=reported,
@@ -452,11 +507,12 @@ class BatteryControlSession:
         """Publish inputs, apply policy, and choose at most one command to send."""
         self._publish("grid", grid, now_mono)
         self._publish("battery", battery, now_mono)
-        reported_for_decide = self._ingest_reported(
+        reported_for_decide, reported_known = self._ingest_reported(
             reported,
             reported_command_w,
             now_mono=now_mono,
         )
+        self.explicit_stale_zero = False
 
         if settings.mode == const.MODE_RELEASED or settings.mode not in _PD_MODES | {
             const.MODE_MANUAL
@@ -482,7 +538,10 @@ class BatteryControlSession:
                 now_mono=now_mono,
                 battery=battery,
                 reported_for_decide=reported_for_decide,
+                reported_known=reported_known,
             )
+
+        self._stale_soc_zero_latched = False
 
         policy = operating_policy(settings)
         if self.kind in _FROZEN_KINDS and policy.kind == "pd":

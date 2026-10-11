@@ -182,6 +182,9 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._queued_dispatch: _Dispatch | None = None
         self._shutting_down = False
         self._release_cleanup_owned = False
+        self._cleanup_physical = False
+        self._mode_after_cleanup: str | None = None
+        self._inherited_released_uncertainty = False
         self._session = BatteryControlSession()
         self._pd_deadband_w = const.DEFAULT_PD_GRID_DEADBAND_W
         # Before any options-driven recalc or the first coordinator refresh.
@@ -203,6 +206,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._capacity_tariff_enabled = const.DEFAULT_CAPACITY_TARIFF_ENABLED
         self._mode = const.DEFAULT_MODE
+        self._inherited_released_uncertainty = self._mode == const.MODE_RELEASED
         self._min_soc = const.DEFAULT_MIN_SOC
         self._max_soc = const.DEFAULT_MAX_SOC
         self._max_battery_power = const.DEFAULT_MAX_BATTERY_POWER
@@ -245,10 +249,20 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def set_mode(self, mode: str) -> None:
         """Set operating mode. Entering Released schedules cleanup once."""
         if mode == const.MODE_RELEASED:
+            self._mode_after_cleanup = None
             self._enter_released()
             return
+        if self._cleanup_physical:
+            # The Modbus sequence already started. Finish it, then apply this mode.
+            self._mode_after_cleanup = mode
+            return
+        self._leave_released_now(mode)
+
+    def _leave_released_now(self, mode: str) -> None:
+        """Leave Released when no physical cleanup is on the wire."""
         if self._mode == const.MODE_RELEASED:
             self._release_cleanup_owned = False
+            self._inherited_released_uncertainty = False
             self._cancel_released_wait()
         self._mode = mode
         self._async_recalc()
@@ -584,7 +598,18 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await super().async_shutdown()
 
     def _owns_forced_battery(self) -> bool:
-        """True when this entry may still be holding the battery in force mode."""
+        """True when unload must still neutralize forced battery control.
+
+        A scheduled Released cleanup is ownership even if RS485 looks off and
+        the accepted command is already zero. Startup in Released inherits
+        that uncertainty from the previous process.
+        """
+        if self._release_cleanup_owned or self._released_cleanup_unsub is not None:
+            return True
+        if self._cleanup_physical:
+            return True
+        if self._inherited_released_uncertainty and self._mode == const.MODE_RELEASED:
+            return True
         if self.writer.rs485_on:
             return True
         if self._session.ledger.delivery_uncertain or self._session.ledger.in_flight_w is not None:
@@ -1033,7 +1058,12 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _dispatch_plan(self, plan: ControlPlan) -> None:
         """Reserve one write synchronously, then start the task that submits it."""
-        if self._shutting_down or plan.send_w is None or self._writes_blocked():
+        if (
+            self._shutting_down
+            or self._cleanup_physical
+            or plan.send_w is None
+            or self._writes_blocked()
+        ):
             return
         spec = _Dispatch(
             plan.send_w,
@@ -1047,6 +1077,9 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 self._queued_dispatch = spec
             return
+        if self._session.explicit_stale_zero:
+            self._session.note_stale_soc_zero_attempted()
+            self._session.explicit_stale_zero = False
         self._active_dispatch = spec
         self._queued_dispatch = None
         self._command_task = self.hass.async_create_task(self._async_write_command())
@@ -1080,8 +1113,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         const.MODBUS_SEQUENCE_TIMEOUT_S,
                     )
                     self._record_modbus_sequence_failure(None)
-                    self._active_dispatch = None
-                    self._queued_dispatch = None
+                    self._drop_failed_dispatch(spec)
                     return
                 except asyncio.CancelledError:
                     raise
@@ -1103,6 +1135,11 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     pass
                 else:
                     self._record_modbus_sequence_failure(None)
+                    if spec.safety and spec.command_w == 0:
+                        self._session.note_stale_soc_zero_failed()
+                    if self._modbus_breaker_blocks():
+                        self._drop_failed_dispatch(spec)
+                        return
                 if self._shutting_down or self._session.release_requested:
                     self._queued_dispatch = None
                     self._active_dispatch = None
@@ -1114,10 +1151,19 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ):
                     self._active_dispatch = None
                     return
+                if nxt.safety and nxt.command_w == 0:
+                    self._session.note_stale_soc_zero_attempted()
                 self._active_dispatch = nxt
         finally:
             self._command_task = None
             self.async_update_listeners()
+
+    def _drop_failed_dispatch(self, spec: _Dispatch) -> None:
+        """Forget queued work after a failure. A fresh calculation replaces it."""
+        if spec.safety and spec.command_w == 0:
+            self._session.note_stale_soc_zero_failed()
+        self._active_dispatch = None
+        self._queued_dispatch = None
 
     def _modbus_breaker_blocks(self) -> bool:
         """Return True if Modbus sequences must be skipped (cooldown active)."""
@@ -1177,54 +1223,103 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._schedule_released_cleanup()
 
     async def _async_released_cleanup_when_able(self) -> None:
-        """Wait out restart grace and Modbus cooldown, then run full Released cleanup."""
-        self._session.prepare_release()
-        command_task = self._command_task
-        if command_task is not None and not command_task.done():
+        """Run one Released cleanup. A failure arms a single later retry."""
+        try:
+            self._session.prepare_release()
+            command_task = self._command_task
+            if command_task is not None and not command_task.done():
+                try:
+                    await command_task
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    _LOGGER.debug("In-flight command ended during release", exc_info=True)
             try:
-                await command_task
+                if self._shutting_down:
+                    return
+                if self._mode != const.MODE_RELEASED:
+                    self._session.release_requested = False
+                    self._release_cleanup_owned = False
+                    return
+                if self._cleanup_delay_s() > 0:
+                    self._arm_released_cleanup()
+                    return
+                _LOGGER.info("Running Released cleanup sequence")
+                self._cleanup_physical = True
+                try:
+                    await asyncio.wait_for(
+                        self.writer.async_cleanup_released_sequence(),
+                        timeout=const.MODBUS_SEQUENCE_TIMEOUT_S,
+                    )
+                finally:
+                    self._cleanup_physical = False
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                _LOGGER.debug("In-flight command ended during release", exc_info=True)
-        try:
-            if self._shutting_down:
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "Released cleanup timed out after %ss",
+                    const.MODBUS_SEQUENCE_TIMEOUT_S,
+                )
+                self._record_modbus_sequence_failure(None)
+                self._session.note_release_finished(accepted=False)
+                self.last_sent_setpoint = None
+                self.async_update_listeners()
+                self._finish_cleanup_attempt(success=False)
                 return
-            if self._mode != const.MODE_RELEASED:
-                self._session.release_requested = False
+            except Exception as err:
+                _LOGGER.warning("Released cleanup failed: %s", err)
+                self._record_modbus_sequence_failure(err)
+                self._session.note_release_finished(accepted=False)
+                self.last_sent_setpoint = None
+                self.async_update_listeners()
+                self._finish_cleanup_attempt(success=False)
                 return
-            if self._cleanup_delay_s() > 0:
-                self._arm_released_cleanup()
-                return
-            _LOGGER.info("Running Released cleanup sequence")
-            await asyncio.wait_for(
-                self.writer.async_cleanup_released_sequence(),
-                timeout=const.MODBUS_SEQUENCE_TIMEOUT_S,
-            )
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
-            _LOGGER.warning(
-                "Released cleanup timed out after %ss",
-                const.MODBUS_SEQUENCE_TIMEOUT_S,
-            )
-            self._record_modbus_sequence_failure(None)
-            self._session.note_release_finished(accepted=False)
-            self.last_sent_setpoint = None
-            self.async_update_listeners()
-            return
-        except Exception as err:
-            _LOGGER.warning("Released cleanup failed: %s", err)
-            self._record_modbus_sequence_failure(err)
-            self._session.note_release_finished(accepted=False)
-            self.last_sent_setpoint = None
-            self.async_update_listeners()
-            return
 
-        self._record_modbus_sequence_success()
-        self._session.note_release_finished(accepted=True)
-        self.last_sent_setpoint = None
-        self.async_update_listeners()
+            self._record_modbus_sequence_success()
+            self._session.note_release_finished(accepted=True)
+            self._inherited_released_uncertainty = False
+            self.last_sent_setpoint = None
+            self.async_update_listeners()
+            self._finish_cleanup_attempt(success=True)
+        finally:
+            current = asyncio.current_task()
+            if self._released_cleanup_task is current:
+                self._released_cleanup_task = None
+            self._cleanup_physical = False
+
+    def _arm_released_retry(self) -> None:
+        """Arm one cleanup retry after the failed attempt has left the wire."""
+        if (
+            self._shutting_down
+            or self._mode != const.MODE_RELEASED
+            or self._mode_after_cleanup is not None
+            or self._released_cleanup_unsub is not None
+        ):
+            return
+        self._release_cleanup_owned = True
+        delay = self._cleanup_delay_s()
+        self._released_cleanup_unsub = async_call_later(
+            self.hass,
+            max(0.0, delay),
+            self._on_released_cleanup_due,
+        )
+
+    def _finish_cleanup_attempt(self, *, success: bool) -> None:
+        """Apply a mode chosen during cleanup, or retry a failed Released attempt."""
+        pending = self._mode_after_cleanup
+        self._mode_after_cleanup = None
+        self._cleanup_physical = False
+        if pending is not None:
+            self._release_cleanup_owned = False
+            self._inherited_released_uncertainty = False
+            self._cancel_released_wait()
+            self._session.release_requested = False
+            self._mode = pending
+            self._async_recalc()
+            return
+        if success or self._shutting_down or self._mode != const.MODE_RELEASED:
+            return
+        self._arm_released_retry()
 
     async def async_run_released_cleanup(self) -> None:
         """Await Released cleanup (tests); UI uses async_schedule_released_cleanup."""

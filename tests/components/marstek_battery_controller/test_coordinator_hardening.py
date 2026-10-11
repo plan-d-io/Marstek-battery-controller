@@ -386,3 +386,231 @@ async def test_unload_leaves_no_command_or_cleanup_task(hass) -> None:
         if not task.done() and task is not asyncio.current_task()
     ]
     assert not any("released" in str(task.get_coro()) or "write_command" in str(task.get_coro()) for task in running)
+
+
+async def test_active_mode_waits_for_physical_released_cleanup(hass) -> None:
+    """A running cleanup stays exclusive, then the new mode is calculated once."""
+    coordinator, writer = await _coordinator(hass)
+    _allow_writes(coordinator)
+    _publish(hass, grid="1000", soc="50", battery="0", force="stop")
+    coordinator.set_pd_grid_deadband(0)
+    gate = asyncio.Event()
+    order: list[str] = []
+
+    async def cleanup() -> None:
+        order.append("cleanup")
+        writer.cleanups += 1
+        writer.started.set()
+        await gate.wait()
+        order.append("cleanup-end")
+        writer.rs485_on = False
+
+    async def send(setpoint_w: int) -> None:
+        order.append("send")
+        writer.sends.append(int(setpoint_w))
+        writer.rs485_on = int(setpoint_w) != 0
+
+    writer.async_cleanup_released_sequence = cleanup  # type: ignore[method-assign]
+    writer.async_send_setpoint = send  # type: ignore[method-assign]
+    coordinator.ensure_released_cleanup()
+    await asyncio.wait_for(writer.started.wait(), timeout=2)
+    assert coordinator._cleanup_physical is True
+    coordinator.set_mode(const.MODE_SELF_CONSUMPTION)
+    assert writer.sends == []
+    assert coordinator._mode == const.MODE_RELEASED
+    gate.set()
+    await hass.async_block_till_done()
+    assert order.index("cleanup-end") < order.index("send")
+    assert writer.cleanups == 1
+    assert coordinator._mode == const.MODE_SELF_CONSUMPTION
+    assert writer.rs485_on is True
+
+
+async def test_deferred_cleanup_timer_can_be_cancelled(hass) -> None:
+    """A cleanup that has not touched Modbus is dropped when the mode leaves Released."""
+    coordinator, writer = await _coordinator(hass)
+    _publish(hass)
+    coordinator.ensure_released_cleanup()
+    await hass.async_block_till_done()
+    assert coordinator._released_cleanup_unsub is not None
+    assert writer.cleanups == 0
+    coordinator.set_mode(const.MODE_SELF_CONSUMPTION)
+    await hass.async_block_till_done()
+    assert coordinator._released_cleanup_unsub is None
+    assert writer.cleanups == 0
+    _allow_writes(coordinator)
+    coordinator.set_pd_grid_deadband(0)
+    await coordinator._async_run_calculator()
+    await hass.async_block_till_done()
+    assert writer.sends
+    assert writer.cleanups == 0
+
+
+async def test_unload_cleans_scheduled_and_inherited_released(hass) -> None:
+    """A timer or a Released startup still owes one bounded cleanup on unload."""
+    coordinator, writer = await _coordinator(hass)
+    coordinator.ensure_released_cleanup()
+    await hass.async_block_till_done()
+    assert coordinator._released_cleanup_unsub is not None
+    assert writer.rs485_on is False
+    assert coordinator._session.ledger.accepted_w == 0
+    assert coordinator._command_task is None
+    assert coordinator._mode == const.MODE_RELEASED
+    await coordinator.async_shutdown()
+    assert writer.cleanups == 1
+    assert coordinator._released_cleanup_unsub is None
+    assert coordinator._released_cleanup_task is None
+
+    inherited, inherited_writer = await _coordinator(hass)
+    assert inherited._mode == const.MODE_RELEASED
+    assert inherited._inherited_released_uncertainty is True
+    assert inherited._release_cleanup_owned is False
+    await inherited.async_shutdown()
+    assert inherited_writer.cleanups == 1
+    assert inherited._released_cleanup_task is None
+
+
+async def test_failed_released_cleanup_retries_once(hass) -> None:
+    """One failed cleanup is retried later, and the two attempts never overlap."""
+    coordinator, writer = await _coordinator(hass)
+    _allow_writes(coordinator)
+    current = 0
+    peak = 0
+
+    async def cleanup() -> None:
+        nonlocal current, peak
+        current += 1
+        peak = max(peak, current)
+        writer.cleanups += 1
+        try:
+            if writer.cleanups == 1:
+                raise RuntimeError("cleanup failed")
+            writer.rs485_on = False
+        finally:
+            current -= 1
+
+    writer.async_cleanup_released_sequence = cleanup  # type: ignore[method-assign]
+    coordinator.ensure_released_cleanup()
+    await hass.async_block_till_done()
+    if writer.cleanups == 1:
+        assert coordinator._released_cleanup_unsub is not None
+        assert coordinator._released_cleanup_task is None
+        coordinator._on_released_cleanup_due(dt_util.utcnow())
+        await hass.async_block_till_done()
+    assert writer.cleanups == 2
+    assert peak == 1
+    assert coordinator._modbus_breaker_until_mono is None
+
+
+async def test_unknown_stale_soc_sends_one_explicit_zero(hass, freezer) -> None:
+    """Unknown device state with stale SoC sends one zero, then waits."""
+    freezer.move_to("2026-06-01 12:00:00+00:00")
+    coordinator, writer = await _coordinator(hass)
+    _allow_writes(coordinator)
+    _publish(hass, grid="0", soc="50", battery="0", force="stop")
+    coordinator.set_pd_grid_deadband(0)
+    coordinator.set_mode(const.MODE_SELF_CONSUMPTION)
+    await hass.async_block_till_done()
+    assert coordinator._session.ledger.accepted_w == 0
+    assert writer.sends == []
+
+    freezer.tick(timedelta(seconds=31))
+    hass.states.async_set(FORCE, "unavailable")
+    hass.states.async_remove(BATTERY)
+    hass.states.async_remove(CHARGE)
+    hass.states.async_remove(DISCHARGE)
+    coordinator._session.pd.last_opportunity_mono = 1_000_000.0
+    await coordinator._async_run_calculator()
+    await hass.async_block_till_done()
+    assert writer.sends == [0]
+    assert coordinator._session._stale_soc_zero_latched is True
+
+    await coordinator._async_run_calculator()
+    await hass.async_block_till_done()
+    assert writer.sends == [0]
+
+    hass.states.async_set(SOC, "51")
+    await coordinator._async_run_calculator()
+    await hass.async_block_till_done()
+    assert coordinator._session._stale_soc_zero_latched is False
+
+
+async def test_failed_explicit_zero_can_be_retried(hass, freezer) -> None:
+    """A failed safety zero is not latched, so the next calculation can send it."""
+    freezer.move_to("2026-06-01 12:00:00+00:00")
+    coordinator, writer = await _coordinator(hass)
+    _allow_writes(coordinator)
+    _publish(hass, grid="0", soc="50", battery="0", force="stop")
+    coordinator.set_pd_grid_deadband(0)
+    coordinator.set_mode(const.MODE_SELF_CONSUMPTION)
+    await hass.async_block_till_done()
+
+    async def send(setpoint_w: int) -> None:
+        writer.sends.append(int(setpoint_w))
+        if len(writer.sends) == 1:
+            raise RuntimeError("zero failed")
+
+    writer.async_send_setpoint = send  # type: ignore[method-assign]
+    freezer.tick(timedelta(seconds=31))
+    hass.states.async_set(FORCE, "unavailable")
+    hass.states.async_remove(BATTERY)
+    hass.states.async_remove(CHARGE)
+    hass.states.async_remove(DISCHARGE)
+    await coordinator._async_run_calculator()
+    await hass.async_block_till_done()
+    assert writer.sends == [0]
+    assert coordinator._session._stale_soc_zero_latched is False
+    assert coordinator._modbus_breaker_until_mono is None
+
+    await coordinator._async_run_calculator()
+    await hass.async_block_till_done()
+    assert writer.sends == [0, 0]
+
+
+async def test_open_breaker_drops_queued_command(hass, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failure that opens the breaker does not send the command queued behind it."""
+    monkeypatch.setattr(const, "MODBUS_FAILURE_ERROR_THRESHOLD", 1)
+    coordinator, writer = await _coordinator(hass)
+    _allow_writes(coordinator)
+    writer.block = True
+    fail_once = True
+
+    async def send(setpoint_w: int) -> None:
+        nonlocal fail_once
+        writer.sends.append(int(setpoint_w))
+        writer.started.set()
+        if writer.block:
+            writer.active += 1
+            try:
+                await writer.release.wait()
+            finally:
+                writer.active -= 1
+        if fail_once:
+            fail_once = False
+            raise RuntimeError("transport")
+
+    writer.async_send_setpoint = send  # type: ignore[method-assign]
+    coordinator._dispatch_plan(_command(100))
+    await asyncio.wait_for(writer.started.wait(), timeout=2)
+    coordinator._dispatch_plan(_command(200))
+    assert coordinator._queued_dispatch is not None
+    assert coordinator._queued_dispatch.command_w == 200
+    writer.release.set()
+    task = coordinator._command_task
+    assert task is not None
+    await asyncio.wait_for(task, timeout=2)
+    await hass.async_block_till_done()
+    assert writer.sends == [100]
+    assert coordinator._queued_dispatch is None
+    assert coordinator._active_dispatch is None
+    assert coordinator._modbus_breaker_until_mono is not None
+
+    coordinator._dispatch_plan(_command(300))
+    await hass.async_block_till_done()
+    assert writer.sends == [100]
+
+    coordinator._modbus_breaker_until_mono = None
+    writer.block = False
+    coordinator._dispatch_plan(_command(300))
+    await hass.async_block_till_done()
+    assert writer.sends == [100, 300]
