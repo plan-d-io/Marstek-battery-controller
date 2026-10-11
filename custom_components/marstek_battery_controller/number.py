@@ -17,6 +17,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import const
 from .coordinator import MarstekBatteryCoordinator
+from .pd_controller import (
+    PD_DEADBAND_MAX_W,
+    PD_DEADBAND_MIN_W,
+    PD_DEADBAND_STEP_W,
+)
 from .device_helpers import marstek_controller_device_info
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,6 +82,18 @@ def _descriptions() -> tuple[MarstekNumberEntityDescription, ...]:
             mode="box",
             coord_get=lambda c: c.send_interval_value,
             coord_set=lambda c, v: c.set_send_interval(v),
+        ),
+        MarstekNumberEntityDescription(
+            key=const.ENTITY_PD_GRID_DEADBAND,
+            translation_key=const.ENTITY_PD_GRID_DEADBAND,
+            entity_category=EntityCategory.CONFIG,
+            native_unit_of_measurement=UnitOfPower.WATT,
+            native_min_value=PD_DEADBAND_MIN_W,
+            native_max_value=PD_DEADBAND_MAX_W,
+            native_step=PD_DEADBAND_STEP_W,
+            mode="box",
+            coord_get=lambda c: c.pd_grid_deadband_value,
+            coord_set=lambda c, v: c.set_pd_grid_deadband(v),
         ),
         MarstekNumberEntityDescription(
             key=const.ENTITY_GRID_SMOOTHING_WINDOW,

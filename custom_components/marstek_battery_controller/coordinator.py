@@ -1,11 +1,12 @@
-"""Coordinator: smoothing, calculator, Modbus writer, and timed write ticks."""
+"""Coordinator: PD battery control, diagnostics, and Modbus writes."""
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 import logging
+import time as time_mod
 from typing import Any, Literal
 
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, State, callback
@@ -15,20 +16,25 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from . import const
-from .direction_gate import DirectionGateState, evaluate_direction_gate
+from .battery_transport import deliver_command
 from .calculator import (
-    CalculatorInputs,
     CalculatorOutput,
-    compute_base,
     compute_latest_start_charge,
     compute_peak_window_deadline,
-    compute_setpoint,
     effective_cap_threshold_w,
     energy_needed_for_reserve_wh,
     minutes_until_peak_window,
 )
-from .discovery import ResolvedEntities
 from .modbus_writer import MarstekModbusWriter
+from .pd_session import (
+    BatteryControlSession,
+    ChannelSample,
+    ControlPlan,
+    SessionSettings,
+    normalize_pd_grid_deadband,
+    reported_command_w,
+)
+from .discovery import ResolvedEntities
 from .homewizard_poller import HomeWizardPoller
 from .smoothing import SlidingWindowMean
 from .storage import MarstekStorage
@@ -75,8 +81,23 @@ class CoordinatorRuntimeConfig:
     grid_power_poller: HomeWizardPoller | None = None
 
 
+class _WriterTransport:
+    """Adapt the existing marstek_modbus writer to the PD transport contract."""
+
+    def __init__(self, writer: MarstekModbusWriter) -> None:
+        self._writer = writer
+
+    async def async_send_command(self, command_w: int) -> None:
+        """Apply one signed setpoint. Positive discharges, negative charges."""
+        await self._writer.async_send_setpoint(command_w)
+
+    async def async_release(self) -> None:
+        """Return the battery to its own control."""
+        await self._writer.async_cleanup_released_sequence()
+
+
 class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Orchestrates calculator output and Modbus writes."""
+    """Orchestrates PD battery control and Modbus writes."""
 
     def __init__(
         self,
@@ -121,8 +142,10 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._modbus_consecutive_failures = 0
         self._modbus_breaker_until_mono: float | None = None
         self._released_cleanup_task: asyncio.Task[None] | None = None
-        self._direction_gate = DirectionGateState()
+        self._command_task: asyncio.Task[None] | None = None
         self._write_grace_until: datetime | None = None
+        self._session = BatteryControlSession()
+        self._pd_deadband_w = const.DEFAULT_PD_GRID_DEADBAND_W
 
         # Must not shadow DataUpdateCoordinator._listeners (dict of entity update callbacks).
         self._state_change_unsubs: list[CALLBACK_TYPE] = []
@@ -151,9 +174,14 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # —— Parameter setters (called by entity platforms) ————————————————
 
     def set_send_interval(self, value: float) -> None:
-        """Update Modbus tick interval (seconds)."""
+        """Minimum gap between ordinary PD opportunities. Not a write heartbeat."""
         self._send_interval_s = max(const.MIN_SEND_INTERVAL_S, min(const.MAX_SEND_INTERVAL_S, value))
         self._reschedule_tick()
+
+    def set_pd_grid_deadband(self, value: float) -> None:
+        """Allowed grid error before PD acts. 0 W disables the deadband."""
+        self._pd_deadband_w = normalize_pd_grid_deadband(value)
+        self._async_recalc()
 
     def set_grid_smoothing_window(self, value: float) -> None:
         """Resize grid smoothing window."""
@@ -204,8 +232,13 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @property
     def send_interval_value(self) -> float:
-        """Send interval (s)."""
+        """Minimum ordinary control interval (s)."""
         return self._send_interval_s
+
+    @property
+    def pd_grid_deadband_value(self) -> float:
+        """PD grid deadband (W)."""
+        return self._pd_deadband_w
 
     @property
     def grid_smoothing_window_value(self) -> float:
@@ -357,6 +390,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "max_soc": self._max_soc,
             "max_battery_power": self._max_battery_power,
             "send_interval": self._send_interval_s,
+            "pd_grid_deadband": self._pd_deadband_w,
             "grid_smoothing": self._grid_smooth_s,
             "battery_smoothing": self._battery_smooth_s,
             "battery_capacity": self._battery_capacity_wh,
@@ -452,6 +486,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.previous_mode = None
         await self.storage.async_save_previous_mode(None)
         self.persist_entry_options(self.hass, self.entry_id)
+        self._async_recalc()
         self.async_update_listeners()
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -468,7 +503,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._tick_unsub = None
 
     def _schedule_tick(self) -> None:
-        """Periodic write tick."""
+        """Re-evaluate control. Elapsed time alone does not send a command."""
         self._cancel_tick()
 
         @callback
@@ -493,8 +528,8 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Called by HomeWizard poller after each successful read."""
         self._async_recalc()
 
-    async def _async_run_calculator(self) -> None:
-        """Compute target setpoint from current HA state."""
+    async def _async_run_calculator(self, *, opportunity: bool = True) -> None:
+        """Compute the next battery command from current Home Assistant state."""
         now = dt_util.now()
         hass = self.hass
 
@@ -547,6 +582,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                     self._mode = const.MODE_RELEASED
                     self.async_update_listeners()
+                    self.hass.async_create_task(self.async_schedule_released_cleanup())
 
         _mark_bad("grid", bool(grid_ok))
         _mark_bad("soc", bool(soc_ok))
@@ -599,79 +635,213 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             now=now,
         )
 
-        inp = CalculatorInputs(
+        self._snapshot_grid_smoothed = grid_smoothed
+        self._snapshot_batt_smoothed = batt_smoothed
+        self._snapshot_cap_now = cap_now
+        self._snapshot_latest_start = ls
+
+        now_mono = time_mod.monotonic()
+        now_wall = dt_util.utcnow()
+        if self._writes_blocked():
+            opportunity = False
+        latest = ls if ls is not None else const.LATEST_START_NO_NEED
+        settings = SessionSettings(
             mode=self._mode,
-            grid_smoothed=grid_smoothed,
-            battery_smoothed=batt_smoothed,
-            current_soc=current_soc,
-            grid_sensor_ok=bool(grid_ok),
+            soc=current_soc,
             soc_sensor_ok=bool(soc_ok),
-            battery_sensor_ok=bool(batt_ok),
-            cap_now=cap_now,
-            monthly_peak_w=monthly_peak,
-            monthly_peak_ok=monthly_ok,
-            capacity_tariff_enabled=self._capacity_tariff_enabled,
-            max_desired_peak_w=self._max_desired_peak_w,
             min_soc=self._min_soc,
             max_soc=self._max_soc,
             max_battery_power_w=self._max_battery_power,
+            min_interval_s=self._send_interval_s,
+            deadband_w=self._pd_deadband_w,
             reserve_target_soc=self._reserve_target_soc,
             boost_charge_power_w=self._boost_charge_power,
             manual_target_soc=self._manual_target_soc,
             manual_power_w=self._manual_power,
             reserve_protection_start=self._reserve_protection_time,
             peak_window_start=self._peak_window_time,
-            latest_start_charge=ls,
+            capacity_tariff_enabled=self._capacity_tariff_enabled,
+            cap_now=cap_now,
+            effective_cap_w=effective_cap_threshold_w(
+                self._max_desired_peak_w,
+                monthly_peak,
+                monthly_ok,
+            ),
+            latest_start_charge=latest,
             peak_window_deadline=deadline,
             now=now,
         )
-
-        self._snapshot_grid_smoothed = grid_smoothed
-        self._snapshot_batt_smoothed = batt_smoothed
-        self._snapshot_cap_now = cap_now
-        self._snapshot_latest_start = ls
-
-        base_preview = compute_base(grid_smoothed, batt_smoothed)
-        out = compute_setpoint(inp)
+        plan = self._session.plan(
+            settings,
+            now_mono=now_mono,
+            grid=self._grid_sample(poller, grid_st, now_mono, now_wall),
+            battery=self._channel_sample(batt_st if batt_ok else None, now_mono, now_wall),
+            reported_command_w=self._reported_battery_command(),
+            opportunity=opportunity,
+        )
+        self.last_calc_output = CalculatorOutput(
+            setpoint_w=plan.proposed_w,
+            operating_state=plan.operating_state,
+            reason_code=plan.reason_code,
+        )
+        self.target_setpoint = plan.proposed_w
         _LOGGER.debug(
-            "setpoint: mode=%s grid=%.1f batt=%.1f base=%.1f -> out_w=%s state=%s reason=%s",
+            "pd: mode=%s proposed=%s send=%s state=%s reason=%s",
             self._mode,
-            grid_smoothed,
-            batt_smoothed,
-            base_preview,
-            out.setpoint_w,
-            out.operating_state,
-            out.reason_code,
+            plan.proposed_w,
+            plan.send_w,
+            plan.operating_state,
+            plan.reason_code,
         )
-
-        if out.setpoint_w is None:
-            self.last_calc_output = out
-            self.async_update_listeners()
-            return
-
-        gate = evaluate_direction_gate(
-            self._mode,
-            out.setpoint_w,
-            self.target_setpoint,
-            self._direction_gate,
-            asyncio.get_running_loop().time(),
-        )
-        if gate.apply:
-            self.last_calc_output = out
-            self.target_setpoint = out.setpoint_w
-        else:
-            self.last_calc_output = replace(
-                out,
-                reason_code=gate.reason_code or const.REASON_DIRECTION_COOLDOWN,
-            )
-            _LOGGER.debug(
-                "Direction gate closed: raw=%s W, target=%s W, flips_in_window=%s",
-                out.setpoint_w,
-                self.target_setpoint,
-                len(self._direction_gate.flip_times),
-            )
-
         self.async_update_listeners()
+        if plan.send_w is None or plan.release or self._writes_blocked():
+            return
+        self._dispatch_plan(plan)
+
+    def _grid_sample(
+        self,
+        poller: HomeWizardPoller | None,
+        grid_state: State | None,
+        now_mono: float,
+        now_wall: datetime,
+    ) -> ChannelSample:
+        """Grid publication from the fast poller or a Home Assistant sensor."""
+        if poller is not None:
+            if poller.latest_w is None or poller.latest_mono is None:
+                return ChannelSample(value_w=None, available=False)
+            return ChannelSample(
+                value_w=poller.latest_w,
+                publication_id=f"hw:{poller.latest_mono:.9f}",
+                source_mono=poller.latest_mono,
+            )
+        return self._channel_sample(grid_state, now_mono, now_wall)
+
+    def _channel_sample(
+        self,
+        state: State | None,
+        now_mono: float,
+        now_wall: datetime,
+    ) -> ChannelSample:
+        """One sensor reading. Repeating the same state is not a new publication."""
+        if state is None or state.state in ("unknown", "unavailable", None, ""):
+            return ChannelSample(value_w=None, available=False)
+        value = parse_optional_float_state(state)
+        if value is None:
+            return ChannelSample(value_w=None, available=False)
+        stamp = getattr(state, "last_reported", None) or getattr(state, "last_updated", None)
+        age: float | None = None
+        publication_id: str | None = None
+        if stamp is not None:
+            try:
+                age = max(0.0, (now_wall - stamp).total_seconds())
+                publication_id = f"{state.entity_id}:{stamp.timestamp()}"
+            except (TypeError, AttributeError, ValueError):
+                age = None
+                publication_id = None
+        return ChannelSample(
+            value_w=value,
+            publication_id=publication_id,
+            source_mono=now_mono,
+            wall_age_s=age,
+        )
+
+    def _reported_battery_command(self) -> int | None:
+        """Signed watts reported by the Marstek force mode and power numbers."""
+        resolved = self.runtime.resolved
+        mode_state = self.hass.states.get(resolved.force_mode)
+        if mode_state is None or mode_state.state in ("unknown", "unavailable", None, ""):
+            return None
+        charge = parse_optional_float_state(self.hass.states.get(resolved.set_charge_power))
+        discharge = parse_optional_float_state(
+            self.hass.states.get(resolved.set_discharge_power)
+        )
+        return reported_command_w(mode_state.state, charge, discharge)
+
+    def _writes_blocked(self) -> bool:
+        """True while restart grace or the Modbus breaker forbids a write."""
+        if self._write_grace_until is not None:
+            if dt_util.utcnow() >= self._write_grace_until:
+                _LOGGER.info("Restart write grace elapsed; Modbus writes enabled")
+                self._write_grace_until = None
+            else:
+                return True
+        return self._modbus_breaker_blocks()
+
+    def _dispatch_plan(self, plan: ControlPlan) -> None:
+        """Start one write, or queue it behind the write already in flight."""
+        if plan.send_w is None:
+            return
+        task = self._command_task
+        if task is not None and not task.done():
+            if plan.send_w != self._session.ledger.in_flight_w:
+                self._session.ledger.submit(
+                    plan.send_w,
+                    safety=plan.safety,
+                    reassert=plan.reassert,
+                )
+            return
+        self._command_task = self.hass.async_create_task(self._async_write_command(plan))
+
+    async def _async_write_command(self, plan: ControlPlan) -> None:
+        """Send the planned command and then the newest command queued behind it."""
+        command: int | None = plan.send_w
+        safety = plan.safety
+        reassert = plan.reassert
+        pd_state = self._session.pd if plan.kind == "pd" else None
+        try:
+            while command is not None:
+                if self._session.release_requested:
+                    self._session.ledger.discard_pending()
+                    return
+                try:
+                    result = await asyncio.wait_for(
+                        deliver_command(
+                            _WriterTransport(self.writer),
+                            self._session.ledger,
+                            command,
+                            time_mod.monotonic(),
+                            pd_state=pd_state,
+                            safety=safety,
+                            reassert=reassert,
+                        ),
+                        timeout=const.MODBUS_SEQUENCE_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    _LOGGER.warning(
+                        "Modbus write timed out after %ss",
+                        const.MODBUS_SEQUENCE_TIMEOUT_S,
+                    )
+                    self._record_modbus_sequence_failure(None)
+                    return
+                except asyncio.CancelledError:
+                    raise
+                if result.accepted and result.sent_w is not None:
+                    self.last_sent_setpoint = result.sent_w
+                    self._record_modbus_sequence_success()
+                    _LOGGER.debug("Modbus write OK: setpoint=%s W", result.sent_w)
+                elif result.queued:
+                    pass
+                elif (
+                    not result.uncertain
+                    and command == self._session.ledger.accepted_w
+                    and not safety
+                    and not reassert
+                ):
+                    pass
+                else:
+                    self._record_modbus_sequence_failure(None)
+                    if self._session.ledger.pending_w is None:
+                        return
+                if self._session.release_requested or self._session.ledger.pending_w is None:
+                    if self._session.release_requested:
+                        self._session.ledger.discard_pending()
+                    return
+                command = self._session.ledger.pending_w
+                safety = self._session.ledger.pending_safety
+                reassert = False
+                pd_state = self._session.pd if self._session.kind == "pd" else None
+        finally:
+            self.async_update_listeners()
 
     def _modbus_breaker_blocks(self) -> bool:
         """Return True if Modbus sequences must be skipped (cooldown active)."""
@@ -721,50 +891,10 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def _async_tick_writes(self) -> None:
-        """Send Modbus if target differs from last sent."""
-        if self._write_grace_until:
-            if dt_util.utcnow() >= self._write_grace_until:
-                _LOGGER.info(
-                    "Restart write grace elapsed; Modbus writes enabled",
-                )
-                self._write_grace_until = None
-            else:
-                return
-
+        """Open a control opportunity. A quiet interval does not write."""
         if self._mode == const.MODE_RELEASED:
             return
-
-        if (
-            self.last_sent_setpoint is not None
-            and self.last_sent_setpoint == self.target_setpoint
-        ):
-            return
-
-        if self._modbus_breaker_blocks():
-            return
-
-        try:
-            await asyncio.wait_for(
-                self.writer.async_send_setpoint(self.target_setpoint),
-                timeout=const.MODBUS_SEQUENCE_TIMEOUT_S,
-            )
-        except asyncio.TimeoutError:
-            _LOGGER.warning(
-                "Modbus write timed out after %ss",
-                const.MODBUS_SEQUENCE_TIMEOUT_S,
-            )
-            self._record_modbus_sequence_failure(None)
-            return
-        except Exception as err:
-            self._record_modbus_sequence_failure(err)
-            return
-
-        self.last_sent_setpoint = self.target_setpoint
-        self._record_modbus_sequence_success()
-        _LOGGER.debug(
-            "Modbus write OK: target_setpoint=%s W",
-            self.target_setpoint,
-        )
+        await self._async_run_calculator(opportunity=True)
 
     async def async_schedule_released_cleanup(self) -> None:
         """Cancel any in-flight Released cleanup and run cleanup when the circuit allows."""
@@ -780,6 +910,15 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_released_cleanup_when_able(self) -> None:
         """Wait out Modbus cooldown, then run full Released cleanup with timeout."""
+        self._session.prepare_release()
+        command_task = self._command_task
+        if command_task is not None and not command_task.done():
+            try:
+                await command_task
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.debug("In-flight command ended during release", exc_info=True)
         loop = asyncio.get_running_loop()
         try:
             while True:
@@ -794,6 +933,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if self._mode != const.MODE_RELEASED:
                 _LOGGER.debug("Released cleanup skipped: mode is %s", self._mode)
+                self._session.release_requested = False
                 return
 
             _LOGGER.info("Running Released cleanup sequence")
@@ -809,17 +949,20 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 const.MODBUS_SEQUENCE_TIMEOUT_S,
             )
             self._record_modbus_sequence_failure(None)
+            self._session.note_release_finished(accepted=False)
             self.last_sent_setpoint = None
             self.async_update_listeners()
             return
         except Exception as err:
             _LOGGER.warning("Released cleanup failed: %s", err)
             self._record_modbus_sequence_failure(err)
+            self._session.note_release_finished(accepted=False)
             self.last_sent_setpoint = None
             self.async_update_listeners()
             return
 
         self._record_modbus_sequence_success()
+        self._session.note_release_finished(accepted=True)
         self.last_sent_setpoint = None
         self.async_update_listeners()
 

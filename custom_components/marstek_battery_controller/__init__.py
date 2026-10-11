@@ -56,6 +56,8 @@ def _apply_options(coordinator: Any, options: dict[str, Any]) -> None:
         coordinator.set_max_battery_power(float(options["max_battery_power"]))
     if "send_interval" in options:
         coordinator.set_send_interval(float(options["send_interval"]))
+    if "pd_grid_deadband" in options:
+        coordinator.set_pd_grid_deadband(float(options["pd_grid_deadband"]))
     if "grid_smoothing" in options:
         coordinator.set_grid_smoothing_window(float(options["grid_smoothing"]))
     if "battery_smoothing" in options:

@@ -179,6 +179,20 @@ def _param_schema_defaults(
     )
     schema_dict[
         vol.Optional(
+            "pd_grid_deadband",
+            default=d.get("pd_grid_deadband", const.DEFAULT_PD_GRID_DEADBAND_W),
+        )
+    ] = selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=0,
+            max=200,
+            step=5,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement=UnitOfPower.WATT,
+        )
+    )
+    schema_dict[
+        vol.Optional(
             "grid_smoothing",
             default=d.get("grid_smoothing", const.DEFAULT_GRID_SMOOTHING_WINDOW),
         )
@@ -713,6 +727,7 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
             "max_soc": const.DEFAULT_MAX_SOC,
             "max_battery_power": const.DEFAULT_MAX_BATTERY_POWER,
             "send_interval": const.DEFAULT_SEND_INTERVAL,
+            "pd_grid_deadband": const.DEFAULT_PD_GRID_DEADBAND_W,
             "grid_smoothing": const.DEFAULT_GRID_SMOOTHING_WINDOW,
             "battery_smoothing": const.DEFAULT_BATTERY_SMOOTHING_WINDOW,
             "battery_capacity": const.DEFAULT_BATTERY_CAPACITY_WH,
@@ -804,6 +819,7 @@ class MarstekBatteryOptionsFlow(OptionsFlow):
             "max_soc": const.DEFAULT_MAX_SOC,
             "max_battery_power": const.DEFAULT_MAX_BATTERY_POWER,
             "send_interval": const.DEFAULT_SEND_INTERVAL,
+            "pd_grid_deadband": const.DEFAULT_PD_GRID_DEADBAND_W,
             "grid_smoothing": const.DEFAULT_GRID_SMOOTHING_WINDOW,
             "battery_smoothing": const.DEFAULT_BATTERY_SMOOTHING_WINDOW,
             "battery_capacity": const.DEFAULT_BATTERY_CAPACITY_WH,
