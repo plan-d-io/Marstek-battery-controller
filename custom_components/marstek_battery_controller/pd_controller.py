@@ -36,8 +36,9 @@ actuator sign and subtracts the same correction.
 
 A calculated request is not a physical command. Direction changes only when a
 write is accepted, a measurement re-anchor is applied, or control is released.
-The zero-cross dwell starts at ``now_mono``, the time the controller sees the
-reversal, never at a source timestamp that is already in the past.
+The zero-cross dwell keys off the sign of that calculated command, not the
+sign of the grid error. It starts at ``now_mono``, the time the controller
+sees the reversal, never at a source timestamp that is already in the past.
 """
 
 from __future__ import annotations
@@ -350,24 +351,25 @@ def _apply_direction_gate(
     error_w: float,
     now_mono: float,
 ) -> tuple[int, bool, str | None]:
-    """Hold at zero until an opposite physical direction has persisted.
+    """Hold at zero only when the calculated command changes sign.
 
-    ``now_mono`` is the receipt time. A source timestamp must not start the
-    dwell in the past. ``last_direction`` is physical and is not modified here.
+    Opposite grid error can mean "reduce the existing command." It is not a
+    reversal unless ``proposed_w`` itself has the opposite sign. Grid error
+    is only the hysteresis magnitude. ``now_mono`` is the receipt time, and
+    ``last_direction`` is physical and is not modified here.
     """
     direction = state.last_direction
-    deadband = grid_deadband_w(params)
-    intent_dir = _sign(error_w) if abs(error_w) > deadband else 0
+    command_dir = _sign(proposed_w)
     hold_needed = zero_cross_hold_s(params)
 
     if state.reversal_unlocked:
-        if direction == 0 or intent_dir in (0, direction):
+        if direction == 0 or command_dir in (0, direction):
             state.reversal_unlocked = False
         else:
             state.opposite_since_mono = None
             return proposed_w, False, None
 
-    if direction != 0 and intent_dir in (0, direction):
+    if direction != 0 and command_dir in (0, direction):
         state.opposite_since_mono = None
         return proposed_w, False, None
 
@@ -381,8 +383,6 @@ def _apply_direction_gate(
         return proposed_w, False, None
 
     if abs(error_w) < params.direction_hysteresis_w:
-        if _sign(proposed_w) in (0, direction):
-            return proposed_w, False, None
         return state.requested_w, False, None
 
     if state.opposite_since_mono is None:

@@ -423,12 +423,17 @@ def test_output_clamp_and_slew_limit() -> None:
 
 def test_zero_cross_hold_survives_watchdog_and_then_reverses() -> None:
     state = PDState()
-    params = PDParams(direction_hysteresis_w=60.0, battery_actuator_latency_s=2.0, kd=0.0)
+    params = PDParams(
+        direction_hysteresis_w=60.0,
+        battery_actuator_latency_s=2.0,
+        kd=0.0,
+        max_power_change_w=10000.0,
+    )
     hold_s = zero_cross_hold_s(params)
     assert hold_s >= 5.0
     _accept(state, 500)
 
-    started = _step(state, params, -800.0, 0.0, publication_id="z0")
+    started = _step(state, params, -4000.0, 0.0, publication_id="z0")
     assert started.proposed_command_w == 0
     assert started.zero_cross_hold
     assert state.last_direction == 1
@@ -543,10 +548,10 @@ def test_proposal_does_not_change_physical_direction() -> None:
 
 def test_charge_to_discharge_uses_the_same_hold() -> None:
     state = PDState()
-    params = PDParams(kd=0.0, battery_actuator_latency_s=2.0)
+    params = PDParams(kd=0.0, battery_actuator_latency_s=2.0, max_power_change_w=10000.0)
     hold_s = zero_cross_hold_s(params)
     _accept(state, -400)
-    started = _step(state, params, 900.0, 0.0, publication_id="c0")
+    started = _step(state, params, 4000.0, 0.0, publication_id="c0")
     assert started.proposed_command_w == 0
     assert state.last_direction == -1
     early = _step(state, params, 900.0, hold_s - 0.2, publication_id="c1")
@@ -555,23 +560,89 @@ def test_charge_to_discharge_uses_the_same_hold() -> None:
     assert later.proposed_command_w > 0
 
 
+def test_opposite_grid_error_does_not_zero_an_existing_charge() -> None:
+    """A smaller charge is not a reversal when the grid error changes sign."""
+    state = PDState()
+    params = PDParams(kp=0.35, kd=0.0, deadband_w=0.0, max_power_change_w=10000.0)
+    _accept(state, -1000)
+    result = _step(state, params, 400.0, 0.0, publication_id="reduce-charge")
+    assert result.error_w > 0
+    assert result.proposed_command_w < 0
+    assert result.proposed_command_w != 0
+    assert result.zero_cross_hold is False
+    assert state.opposite_since_mono is None
+    assert state.requested_w == result.proposed_command_w
+    assert state.last_direction == -1
+
+
+def test_opposite_grid_error_does_not_zero_an_existing_discharge() -> None:
+    """A smaller discharge is not a reversal when the grid error changes sign."""
+    state = PDState()
+    params = PDParams(kp=0.35, kd=0.0, deadband_w=0.0, max_power_change_w=10000.0)
+    _accept(state, 1000)
+    result = _step(state, params, -400.0, 0.0, publication_id="reduce-discharge")
+    assert result.error_w < 0
+    assert result.proposed_command_w > 0
+    assert result.proposed_command_w != 0
+    assert result.zero_cross_hold is False
+    assert state.opposite_since_mono is None
+    assert state.requested_w == result.proposed_command_w
+    assert state.last_direction == 1
+
+
+def test_calculated_charge_to_discharge_crossing_arms_the_dwell() -> None:
+    state = PDState()
+    params = PDParams(kp=0.35, kd=0.0, deadband_w=0.0, max_power_change_w=10000.0)
+    hold_s = zero_cross_hold_s(params)
+    _accept(state, -1000)
+    started = _step(state, params, 8000.0, 0.0, publication_id="cross-discharge")
+    assert started.proposed_command_w == 0
+    assert started.zero_cross_hold
+    assert started.reason_code == "pd_zero_cross_hold"
+    assert state.opposite_since_mono == 0.0
+    assert state.last_direction == -1
+
+    released = _step(state, params, 8000.0, hold_s + 0.1, publication_id="cross-discharge-go")
+    assert released.zero_cross_hold is False
+    assert released.proposed_command_w > 0
+    assert state.reversal_unlocked
+
+
+def test_calculated_discharge_to_charge_crossing_arms_the_dwell() -> None:
+    state = PDState()
+    params = PDParams(kp=0.35, kd=0.0, deadband_w=0.0, max_power_change_w=10000.0)
+    hold_s = zero_cross_hold_s(params)
+    _accept(state, 1000)
+    started = _step(state, params, -8000.0, 0.0, publication_id="cross-charge")
+    assert started.proposed_command_w == 0
+    assert started.zero_cross_hold
+    assert started.reason_code == "pd_zero_cross_hold"
+    assert state.opposite_since_mono == 0.0
+    assert state.last_direction == 1
+
+    released = _step(state, params, -8000.0, hold_s + 0.1, publication_id="cross-charge-go")
+    assert released.zero_cross_hold is False
+    assert released.proposed_command_w < 0
+    assert state.reversal_unlocked
+
+
 def test_transient_reversal_does_not_become_a_stale_flip() -> None:
     state = PDState()
-    params = PDParams(direction_hysteresis_w=60.0, kd=0.0)
+    params = PDParams(direction_hysteresis_w=60.0, kd=0.0, max_power_change_w=10000.0)
     hold_s = zero_cross_hold_s(params)
     _accept(state, 500)
-    _step(state, params, -800.0, 0.0, publication_id="t0")
+    _step(state, params, -4000.0, 0.0, publication_id="t0")
     assert state.opposite_since_mono is not None
     restored = _step(state, params, 400.0, 1.0, publication_id="t1")
     assert state.opposite_since_mono is None
     assert restored.proposed_command_w >= 0
     assert state.reversal_unlocked is False
 
-    late = _step(state, params, -800.0, 100.0, publication_id="t2")
+    late = _step(state, params, -4000.0, 100.0, publication_id="t2")
     assert late.proposed_command_w == 0
     assert late.zero_cross_hold
     assert state.opposite_since_mono == 100.0
-    still = _step(state, params, -800.0, 100.0 + hold_s - 0.1, publication_id="t3")
+    still = _step(state, params, -4000.0, 100.0 + hold_s - 0.1, publication_id="t3")
     assert still.proposed_command_w == 0
 
 
@@ -585,7 +656,7 @@ def test_first_reverse_command_is_slew_limited_from_zero() -> None:
         max_battery_power_w=5000.0,
     )
     hold_s = zero_cross_hold_s(params)
-    _accept(state, 800)
+    _accept(state, 100)
     _step(state, params, -2000.0, 0.0, publication_id="r0")
     elapsed = hold_s + 0.1
     reversed_cmd = _step(state, params, -2000.0, elapsed, publication_id="r1")
@@ -612,9 +683,9 @@ def test_force_zero_consumes_the_publication_without_integrating() -> None:
 
 def test_force_zero_clears_a_hold_and_discharge_permission_blocks() -> None:
     state = PDState()
-    params = PDParams()
+    params = PDParams(kd=0.0, max_power_change_w=10000.0)
     _accept(state, 500)
-    _step(state, params, -800.0, 0.0, publication_id="b0")
+    _step(state, params, -4000.0, 0.0, publication_id="b0")
     assert state.opposite_since_mono is not None
     stopped = _step(state, params, -800.0, 1.0, force_zero=True, publication_id="b1")
     assert stopped.proposed_command_w == 0
@@ -693,7 +764,13 @@ def test_closed_gate_keeps_the_newest_sample_for_the_next_opportunity() -> None:
 def test_reset_clears_publication_and_hold_memory() -> None:
     state = PDState()
     _accept(state, 400)
-    _step(state, PDParams(), -800.0, 0.0, publication_id="reset-me")
+    _step(
+        state,
+        PDParams(kd=0.0, max_power_change_w=10000.0),
+        -4000.0,
+        0.0,
+        publication_id="reset-me",
+    )
     assert state.grid_filtered is not None
     assert state.opposite_since_mono is not None
     reset_pd_state(state)

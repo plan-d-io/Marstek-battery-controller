@@ -21,6 +21,7 @@ from custom_components.marstek_battery_controller.pd_controller import DEFAULT_D
 from custom_components.marstek_battery_controller.pd_session import (
     BatteryControlSession,
     ChannelSample,
+    ReportedObservation,
     SessionSettings,
     normalize_pd_grid_deadband,
     reported_command_w,
@@ -521,6 +522,63 @@ def test_stale_soc_sends_safety_zero_without_advancing_pd() -> None:
     assert session.consider_reported(external, now_mono=20.0) is True
     assert session.ledger.accepted_w == -250
     assert session.pd.last_direction == -1
+
+
+def _delivered_direction(command_w: int) -> BatteryControlSession:
+    """An accepted command that the battery is already carrying out."""
+    session = BatteryControlSession()
+    session.kind = "pd"
+    session.ledger.accepted_w = command_w
+    session.pd.requested_w = command_w
+    session.pd.last_direction = 1 if command_w > 0 else -1
+    session.pd.last_integrate_mono = 0.0
+    return session
+
+
+def test_residual_grid_sign_does_not_zero_a_delivered_charge() -> None:
+    """Import while charging only reduces the charge. It must not stop the battery."""
+    session = _delivered_direction(-1000)
+    plan = session.plan(
+        _settings(deadband_w=0.0, min_interval_s=1.0),
+        now_mono=10.0,
+        grid=_grid(200.0, "residual-import", 10.0),
+        battery=_battery(-900.0, "delivering-charge", 10.0),
+        reported=ReportedObservation(
+            command_w=-1000,
+            publication_id="reported-charge",
+            observed_mono=10.0,
+            fresh=True,
+            coherent=True,
+        ),
+    )
+    assert plan.proposed_w < 0
+    assert plan.send_w is not None and plan.send_w < 0
+    assert session.pd.opposite_since_mono is None
+    assert session.pd.zero_cross_holding is False
+    assert session.pd.last_direction == -1
+
+
+def test_residual_grid_sign_does_not_zero_a_delivered_discharge() -> None:
+    """Export while discharging only reduces the discharge. It must not stop the battery."""
+    session = _delivered_direction(1000)
+    plan = session.plan(
+        _settings(deadband_w=0.0, min_interval_s=1.0),
+        now_mono=10.0,
+        grid=_grid(-200.0, "residual-export", 10.0),
+        battery=_battery(900.0, "delivering-discharge", 10.0),
+        reported=ReportedObservation(
+            command_w=1000,
+            publication_id="reported-discharge",
+            observed_mono=10.0,
+            fresh=True,
+            coherent=True,
+        ),
+    )
+    assert plan.proposed_w > 0
+    assert plan.send_w is not None and plan.send_w > 0
+    assert session.pd.opposite_since_mono is None
+    assert session.pd.zero_cross_holding is False
+    assert session.pd.last_direction == 1
 
 
 @pytest.mark.parametrize(
