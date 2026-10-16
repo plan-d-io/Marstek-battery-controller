@@ -13,6 +13,7 @@ from custom_components.marstek_battery_controller.ev_feedback import (
     NormalizedEvPower,
     ev_exclusion_feedback,
     known_ev_feedback,
+    normalize_battery_measurement,
     normalize_ev_power,
     unusable_ev_feedback,
 )
@@ -28,7 +29,7 @@ def test_ev_off_house_importing() -> None:
     assert result.feedback_w == 1500
     assert result.target_battery_w == 1500
     assert result.allow_discharge is True
-    assert result.allow_charge is False
+    assert result.allow_charge is True
     assert result.request_released is False
 
 
@@ -36,7 +37,7 @@ def test_ev_only_from_grid() -> None:
     result = known_ev_feedback(7000, 0, 7000)
     assert result.target_battery_w == 0
     assert result.feedback_w == 0
-    assert result.allow_discharge is False
+    assert result.allow_discharge is True
     assert result.allow_charge is False
 
 
@@ -54,6 +55,7 @@ def test_pv_covers_house_and_part_of_ev_is_not_grid_minus_ev() -> None:
     assert result.target_battery_w == 0
     assert result.feedback_w == 0
     assert result.feedback_w != grid - ev
+    assert result.allow_discharge is True
     assert result.allow_charge is False
 
 
@@ -74,7 +76,7 @@ def test_export_after_house_and_ev_is_not_grid_minus_ev() -> None:
     assert result.feedback_w != -9500
     assert result.feedback_w != grid - ev
     assert result.allow_charge is True
-    assert result.allow_discharge is False
+    assert result.allow_discharge is True
 
 
 def test_battery_already_discharging_too_much() -> None:
@@ -82,14 +84,16 @@ def test_battery_already_discharging_too_much() -> None:
     assert result.site_balance_w == 7400
     assert result.target_battery_w == 400
     assert result.feedback_w == -1600
+    assert result.allow_discharge is True
     assert result.allow_charge is False
 
 
 def test_battery_discharge_entirely_feeds_ev() -> None:
+    """Trustworthy EV data slews 2000 W of discharge to zero through PD."""
     result = known_ev_feedback(5000, 2000, 7000)
     assert result.target_battery_w == 0
     assert result.feedback_w == -2000
-    assert result.allow_discharge is False
+    assert result.allow_discharge is True
     assert result.allow_charge is False
 
 
@@ -99,14 +103,14 @@ def test_battery_charging_while_real_surplus_remains() -> None:
     assert result.target_battery_w == -1600
     assert result.feedback_w == 1000
     assert result.allow_charge is True
-    assert result.allow_discharge is False
+    assert result.allow_discharge is True
 
 
 def test_surplus_disappears_while_battery_is_charging() -> None:
-    """Import returns while the battery is still charging, so the target is zero.
+    """Import returns while the battery is still charging.
 
-    G=+2500, B=-1500, E=2000. N=+1000, so further charging is not permitted
-    and the target is 0 W rather than a new charge command.
+    G=+2500, B=-1500, E=2000. N=+1000, so charging is closed and the target
+    is 0 W. Discharge stays open so PD can slew toward that target.
     """
     result = known_ev_feedback(2500, -1500, 2000)
     assert result.site_balance_w == 1000
@@ -114,7 +118,7 @@ def test_surplus_disappears_while_battery_is_charging() -> None:
     assert result.target_battery_w == 0
     assert result.feedback_w == 1500
     assert result.allow_charge is False
-    assert result.allow_discharge is False
+    assert result.allow_discharge is True
     assert result.request_released is False
 
 
@@ -134,7 +138,8 @@ def test_target_cannot_be_negative_when_site_balance_is_nonnegative() -> None:
         assert result.site_balance_w >= 0
         assert result.target_battery_w is not None
         assert result.target_battery_w >= 0
-        assert result.allow_charge is False
+        assert result.allow_discharge is True
+        assert result.allow_charge is (ev == 0)
 
 
 def test_target_equals_site_balance_when_exporting() -> None:
@@ -150,7 +155,7 @@ def test_target_equals_site_balance_when_exporting() -> None:
         assert result.site_balance_w < 0
         assert result.target_battery_w == result.site_balance_w
         assert result.allow_charge is True
-        assert result.allow_discharge is False
+        assert result.allow_discharge is True
 
 
 def test_unusable_ev_with_grid_import_closes_both_directions() -> None:
@@ -265,6 +270,61 @@ def test_decision_routes_unusable_power_without_requesting_released() -> None:
     assert importing == unusable_ev_feedback(900, grid_fresh=True)
     assert exporting.request_released is False
     assert importing.request_released is False
+
+
+def test_usable_ev_zero_permits_both_directions() -> None:
+    result = known_ev_feedback(-400, 100, 0)
+    assert result.allow_discharge is True
+    assert result.allow_charge is True
+    assert result.feedback_w == -400
+    assert result.request_released is False
+
+
+@pytest.mark.parametrize(
+    ("battery_w", "normalized"),
+    [
+        (24, 0.0),
+        (24.999, 0.0),
+        (-24, 0.0),
+        (-24.999, 0.0),
+        (25, 25.0),
+        (-25, -25.0),
+    ],
+)
+def test_battery_measurement_floor_boundaries(battery_w: float, normalized: float) -> None:
+    assert normalize_battery_measurement(battery_w) == normalized
+
+
+def test_battery_floor_changes_site_balance_target_and_feedback() -> None:
+    """A 24 W measurement is idle; 25 W still enters N and F."""
+    inside = known_ev_feedback(5400, 24, 7000)
+    assert inside.site_balance_w == 5400
+    assert inside.target_battery_w == 0
+    assert inside.feedback_w == 0
+    assert inside.allow_discharge is True
+    assert inside.allow_charge is False
+
+    above = known_ev_feedback(5400, 25, 7000)
+    assert above.site_balance_w == 5425
+    assert above.target_battery_w == 0
+    assert above.feedback_w == -25
+
+    negative_inside = known_ev_feedback(200, -24.999, 100)
+    assert negative_inside.site_balance_w == 200
+    assert negative_inside.target_battery_w == 100
+    assert negative_inside.feedback_w == 100
+
+    negative_floor = known_ev_feedback(5400, -25, 7000)
+    assert negative_floor.site_balance_w == 5375
+    assert negative_floor.target_battery_w == 0
+    assert negative_floor.feedback_w == 25
+
+
+def test_non_finite_battery_measurement_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        known_ev_feedback(100, math.nan, 0)
+    with pytest.raises(ValueError):
+        normalize_battery_measurement(math.inf)
 
 
 def test_feedback_type_does_not_default_to_released() -> None:

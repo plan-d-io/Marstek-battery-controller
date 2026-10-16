@@ -49,12 +49,18 @@ class NormalizedEvPower:
 
 @dataclass(frozen=True)
 class EvExclusionFeedback:
-    """Permission and feedback for one exclusion step.
+    """EV-layer permissions and feedback for one exclusion step.
+
+    ``allow_discharge`` and ``allow_charge`` are constraints imposed by this
+    layer. They are not the sign of ``B*``. A usable EV reading never blocks
+    discharge: excessive discharge slews toward ``B*`` through PD feedback.
+    Usable zero imposes no directional constraint. Both directions are closed
+    only when EV telemetry is unusable and the grid is not a fresh export.
 
     ``feedback_w`` is what a later layer may pass to the unchanged PD
-    controller. ``None`` means there is no PD feedback: both directions are
-    closed and the session must request zero through its existing permission
-    path. This model never requests Released.
+    controller. ``None`` means there is no PD feedback and the session must
+    request zero through its existing permission path. This model never
+    requests Released.
     """
 
     allow_discharge: bool
@@ -83,24 +89,43 @@ def normalize_ev_power(value: object, unit: str | None) -> NormalizedEvPower:
     return NormalizedEvPower(EvPowerVerdict.POSITIVE, watts)
 
 
+def normalize_battery_measurement(battery_w: float) -> float:
+    """Apply the idle floor to a measured battery power.
+
+    Values strictly inside ``±EV_IDLE_FLOOR_W`` become 0 W. The floor values
+    themselves remain real discharge or charge measurements. This is not
+    command integer rounding.
+    """
+    battery = _finite(battery_w, "battery")
+    if -EV_IDLE_FLOOR_W < battery < EV_IDLE_FLOOR_W:
+        return 0.0
+    return battery
+
+
 def known_ev_feedback(grid_w: float, battery_w: float, ev_w: float) -> EvExclusionFeedback:
     """Feedback for a usable EV power, including usable zero.
 
     ``ev_w`` must already be normalized and therefore cannot be negative.
-    When ``N >= 0``, ``B*`` is not negative and charge is not permitted.
-    When ``N < 0``, ``B*`` is that export and charging it remains permitted.
+    Measured ``battery_w`` is passed through the idle floor before ``N`` and
+    ``F`` are calculated. A positive EV reading never blocks discharge.
+    Charging stays closed unless verified site export remains (``N < 0``).
+    A usable reading of exactly 0 W imposes neither directional constraint.
     """
     ev = float(ev_w)
     if ev < 0.0 or not math.isfinite(ev):
         raise ValueError("EV power must be a finite normalized reading")
     grid = _finite(grid_w, "grid")
-    battery = _finite(battery_w, "battery")
+    battery = normalize_battery_measurement(battery_w)
     site = grid + battery
     non_ev = site - ev
     target = max(0.0, non_ev) + min(0.0, site)
+    if ev == 0.0:
+        allow_charge = True
+    else:
+        allow_charge = site < 0.0
     return EvExclusionFeedback(
-        allow_discharge=target > 0.0,
-        allow_charge=target < 0.0,
+        allow_discharge=True,
+        allow_charge=allow_charge,
         feedback_w=target - battery,
         target_battery_w=target,
         site_balance_w=site,
