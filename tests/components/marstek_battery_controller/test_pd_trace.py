@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from custom_components.marstek_battery_controller.battery_transport import (
     deliver_command,
 )
@@ -238,7 +236,7 @@ def test_household_trace_with_delay_and_irregular_grid() -> None:
     assert state.grid_filtered == filtered
 
 
-def _run_constant_load(
+async def _run_constant_load(
     times: list[float],
     min_interval: float,
     *,
@@ -275,14 +273,12 @@ def _run_constant_load(
         if first is None:
             first = state.requested_w
         if fail_at is not None and abs(stamp - fail_at) < 1e-9:
-            failed = asyncio.run(
-                deliver_command(
-                    _Transport(fail=True),
-                    ledger,
-                    state.requested_w,
-                    stamp,
-                    pd_state=state,
-                )
+            failed = await deliver_command(
+                _Transport(fail=True),
+                ledger,
+                state.requested_w,
+                stamp,
+                pd_state=state,
             )
             assert failed.accepted is False
             reported = ledger.accepted_w
@@ -301,7 +297,7 @@ def _times(period: float, horizon: float = 20.0) -> list[float]:
     return [round(index * period, 6) for index in range(count + 1)]
 
 
-def test_pd_convergence_is_comparable_across_cadences() -> None:
+async def test_pd_convergence_is_comparable_across_cadences() -> None:
     """Same load, different publication and opportunity periods.
 
     After the first opportunity, accumulated P is ``kp * error * elapsed / 2``
@@ -315,7 +311,7 @@ def test_pd_convergence_is_comparable_across_cadences() -> None:
     growths: list[tuple[str, int]] = []
     for period in (0.5, 1.0, 2.0, 5.0):
         for minimum in (1.0, 2.0, 5.0):
-            requested, accepted, first = _run_constant_load(
+            requested, accepted, first = await _run_constant_load(
                 _times(period, horizon),
                 minimum,
             )
@@ -336,9 +332,9 @@ def test_pd_convergence_is_comparable_across_cadences() -> None:
     irregular = [0.0, 0.4, 1.1, 2.6, 5.0, 8.5, 13.0, 17.5, 20.0]
     dropped = [0.0, 0.4, 1.1, 5.0, 8.5, 13.0, 20.0]
     for minimum in (1.0, 2.0, 5.0):
-        irregular_growth = _run_constant_load(irregular, minimum)[0]
-        irregular_growth -= _run_constant_load(irregular, minimum)[2]
-        dropped_requested, dropped_accepted, dropped_first = _run_constant_load(
+        irregular_growth = (await _run_constant_load(irregular, minimum))[0]
+        irregular_growth -= (await _run_constant_load(irregular, minimum))[2]
+        dropped_requested, dropped_accepted, dropped_first = await _run_constant_load(
             dropped, minimum
         )
         assert dropped_accepted == dropped_requested
@@ -346,7 +342,7 @@ def test_pd_convergence_is_comparable_across_cadences() -> None:
         assert abs(irregular_growth - aligned[0]) <= 250
 
 
-def test_interval_alone_does_not_write_and_failures_do_not_reset_the_request() -> None:
+async def test_interval_alone_does_not_write_and_failures_do_not_reset_the_request() -> None:
     params = PDParams(kp=0.35, kd=0.0, min_interval_s=1.0, max_power_change_w=5000.0)
     state = PDState()
     tracker = PublicationTracker()
@@ -355,8 +351,8 @@ def test_interval_alone_does_not_write_and_failures_do_not_reset_the_request() -
     tracker.publish("grid", 400.0, source_mono=0.0, receive_mono=0.0, publication_id="w0")
     first = control_grid(state, params, tracker, now_mono=0.0)
     assert first.integrate_applied
-    assert asyncio.run(
-        deliver_command(transport, ledger, state.requested_w, 0.0, pd_state=state)
+    assert (
+        await deliver_command(transport, ledger, state.requested_w, 0.0, pd_state=state)
     ).accepted
     accepted = ledger.accepted_w
     sent = list(transport.sent)
@@ -386,8 +382,8 @@ def test_interval_alone_does_not_write_and_failures_do_not_reset_the_request() -
     fail_tracker.publish("grid", 400.0, source_mono=0.0, receive_mono=0.0, publication_id="f0")
     control_grid(fail_state, params, fail_tracker, now_mono=0.0)
     built = fail_state.requested_w
-    assert asyncio.run(
-        deliver_command(failing, fail_ledger, built, 0.0, pd_state=fail_state)
+    assert (
+        await deliver_command(failing, fail_ledger, built, 0.0, pd_state=fail_state)
     ).accepted is False
     assert fail_ledger.accepted_w == 0
     assert fail_state.requested_w == built
@@ -395,8 +391,10 @@ def test_interval_alone_does_not_write_and_failures_do_not_reset_the_request() -
     control_grid(fail_state, params, fail_tracker, now_mono=1.0)
     assert fail_state.requested_w > built
     assert fail_ledger.accepted_w == 0
-    assert asyncio.run(
-        deliver_command(_Transport(), fail_ledger, fail_state.requested_w, 1.0, pd_state=fail_state)
+    assert (
+        await deliver_command(
+            _Transport(), fail_ledger, fail_state.requested_w, 1.0, pd_state=fail_state
+        )
     ).accepted
     recovered = fail_state.requested_w
     assert fail_ledger.accepted_w == recovered

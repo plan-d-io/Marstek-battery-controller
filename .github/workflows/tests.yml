@@ -43,4 +43,4 @@ jobs:
           python -c "import inspect; from homeassistant.core import State; signature = inspect.signature(State.__init__); assert 'last_reported' in signature.parameters, signature; state = State('sensor.ci_probe', '0'); assert state.last_reported is not None; print('State.last_reported', state.last_reported.isoformat())"
 
       - name: Run tests
-        run: python -B -m pytest tests -x -vv --tb=long -p no:cacheprovider
+        run: python -B -m pytest tests -q --tb=line -p no:cacheprovider

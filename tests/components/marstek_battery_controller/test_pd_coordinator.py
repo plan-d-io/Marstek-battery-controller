@@ -6,7 +6,6 @@ operating rules, the write gate, and the deadband entity contract.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime, time
 from pathlib import Path
@@ -402,7 +401,7 @@ def test_manual_bypasses_pd_and_released_clears_queued_commands() -> None:
     assert session.ledger.in_flight_w == 100
 
 
-def test_failed_write_does_not_accept_the_proposal() -> None:
+async def test_failed_write_does_not_accept_the_proposal() -> None:
     session = BatteryControlSession()
     plan = _plan(session, _settings(), grid=_grid(1000.0, "g1", 0.0))
     assert plan.send_w == 875
@@ -414,8 +413,8 @@ def test_failed_write_does_not_accept_the_proposal() -> None:
         async def async_release(self) -> None:
             return None
 
-    result = asyncio.run(
-        deliver_command(_Down(), session.ledger, plan.send_w, 0.0, pd_state=session.pd)
+    result = await deliver_command(
+        _Down(), session.ledger, plan.send_w, 0.0, pd_state=session.pd
     )
     assert result.accepted is False
     assert session.ledger.accepted_w == 0
@@ -423,7 +422,7 @@ def test_failed_write_does_not_accept_the_proposal() -> None:
     assert session.pd.last_direction == 0
 
 
-def test_successful_write_accepts_the_sent_command() -> None:
+async def test_successful_write_accepts_the_sent_command() -> None:
     session = BatteryControlSession()
     plan = _plan(session, _settings(), grid=_grid(1000.0, "g1", 0.0))
 
@@ -434,8 +433,8 @@ def test_successful_write_accepts_the_sent_command() -> None:
         async def async_release(self) -> None:
             return None
 
-    result = asyncio.run(
-        deliver_command(_Ok(), session.ledger, plan.send_w, 0.0, pd_state=session.pd)
+    result = await deliver_command(
+        _Ok(), session.ledger, plan.send_w, 0.0, pd_state=session.pd
     )
     assert result.accepted
     assert result.sent_w == 875

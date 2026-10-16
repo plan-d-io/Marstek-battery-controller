@@ -116,14 +116,12 @@ def test_pure_interval_default_is_not_the_entity_default() -> None:
     assert not hasattr(CommandLedger(), "min_interval_s")
 
 
-def test_failed_write_does_not_advance_accepted() -> None:
+async def test_failed_write_does_not_advance_accepted() -> None:
     ledger = CommandLedger(accepted_w=100)
     state = PDState()
     state.requested_w = 400
     transport = _Transport(fail=True)
-    result = asyncio.run(
-        deliver_command(transport, ledger, 400, 1.0, pd_state=state)
-    )
+    result = await deliver_command(transport, ledger, 400, 1.0, pd_state=state)
     assert result.accepted is False
     assert result.sent_w is None
     assert ledger.accepted_w == 100
@@ -131,12 +129,12 @@ def test_failed_write_does_not_advance_accepted() -> None:
     assert state.last_direction == 0
     assert ledger.in_flight_w is None
     assert transport.sent == []
-    asyncio.run(transport.async_release())
+    await transport.async_release()
     assert ledger.accepted_w == 100
     assert transport.sent == ["release"]
 
 
-def test_unaccepted_discharge_does_not_arm_a_reversal_hold() -> None:
+async def test_unaccepted_discharge_does_not_arm_a_reversal_hold() -> None:
     state = PDState()
     params = PDParams(kp=0.35, kd=0.0, max_power_change_w=5000.0)
     proposed = pd_step(
@@ -149,8 +147,8 @@ def test_unaccepted_discharge_does_not_arm_a_reversal_hold() -> None:
     )
     assert proposed.proposed_command_w == 350
     ledger = CommandLedger(accepted_w=0)
-    failed = asyncio.run(
-        deliver_command(_Transport(fail=True), ledger, 350, 0.0, pd_state=state)
+    failed = await deliver_command(
+        _Transport(fail=True), ledger, 350, 0.0, pd_state=state
     )
     assert failed.accepted is False
     assert ledger.accepted_w == 0
@@ -175,8 +173,8 @@ def test_unaccepted_discharge_does_not_arm_a_reversal_hold() -> None:
         source_mono=0.0,
         publication_id="up2",
     )
-    accepted = asyncio.run(
-        deliver_command(_Transport(), ledger_ok := CommandLedger(), 350, 0.0, pd_state=held_state)
+    accepted = await deliver_command(
+        _Transport(), ledger_ok := CommandLedger(), 350, 0.0, pd_state=held_state
     )
     assert accepted.accepted
     assert held_state.last_direction == 1
@@ -299,7 +297,7 @@ def test_reanchor_discards_pending_and_leaves_the_in_flight_write() -> None:
     assert failed_state.requested_w == 40
 
 
-def test_cancelled_delivery_does_not_deadlock_and_can_be_reconciled() -> None:
+async def test_cancelled_delivery_does_not_deadlock_and_can_be_reconciled() -> None:
     ledger = CommandLedger(accepted_w=100)
     state = PDState()
     state.requested_w = 350
@@ -335,7 +333,7 @@ def test_cancelled_delivery_does_not_deadlock_and_can_be_reconciled() -> None:
         assert ledger.uncertain_command_w is None
         assert ledger.in_flight_w is None
 
-    asyncio.run(scenario())
+    await scenario()
 
 
 def test_reported_readback_clears_uncertainty() -> None:
@@ -351,7 +349,7 @@ def test_reported_readback_clears_uncertainty() -> None:
     assert ledger.in_flight_w is None
 
 
-def test_readback_during_an_awaited_write_does_not_drop_the_in_flight_slot() -> None:
+async def test_readback_during_an_awaited_write_does_not_drop_the_in_flight_slot() -> None:
     ledger = CommandLedger(accepted_w=100)
     state = PDState()
     transport = _HangingTransport()
@@ -385,10 +383,10 @@ def test_readback_during_an_awaited_write_does_not_drop_the_in_flight_slot() -> 
         assert ledger.accepted_w == 90
         assert state.last_direction == 1
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_failed_write_ignores_a_readback_received_during_the_await() -> None:
+async def test_failed_write_ignores_a_readback_received_during_the_await() -> None:
     ledger = CommandLedger(accepted_w=100)
     state = PDState()
 
@@ -419,13 +417,13 @@ def test_failed_write_ignores_a_readback_received_during_the_await() -> None:
         assert ledger.accepted_w == 80
         assert state.last_direction == 1
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_completion_timestamp_defaults_to_monotonic() -> None:
+async def test_completion_timestamp_defaults_to_monotonic() -> None:
     ledger = CommandLedger()
     before = time.monotonic()
-    result = asyncio.run(deliver_command(_Transport(), ledger, 400, 0.0))
+    result = await deliver_command(_Transport(), ledger, 400, 0.0)
     after = time.monotonic()
     assert result.accepted
     assert before <= ledger.last_success_mono <= after
@@ -489,7 +487,7 @@ def test_noise_floor_is_applied_at_submit_decision_and_readback() -> None:
     assert state.last_direction == 0
 
 
-def test_settling_starts_when_the_transport_call_completes() -> None:
+async def test_settling_starts_when_the_transport_call_completes() -> None:
     ledger = CommandLedger()
     state = PDState()
     mono = {"now": 10.0}
@@ -501,15 +499,13 @@ def test_settling_starts_when_the_transport_call_completes() -> None:
         async def async_release(self) -> None:
             return None
 
-    result = asyncio.run(
-        deliver_command(
-            _SlowTransport(),
-            ledger,
-            400,
-            10.0,
-            pd_state=state,
-            clock=lambda: mono["now"],
-        )
+    result = await deliver_command(
+        _SlowTransport(),
+        ledger,
+        400,
+        10.0,
+        pd_state=state,
+        clock=lambda: mono["now"],
     )
     assert result.accepted
     assert ledger.last_success_mono == 15.0
