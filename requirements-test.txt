@@ -1,0 +1,12 @@
+# Test stack for the integration's minimum supported Home Assistant line.
+#
+# Home Assistant 2025.9.4 is the newest stable 2025.9 patch on PyPI.
+# It requires Python >=3.13.2.
+# pytest-homeassistant-custom-component 0.13.281 requires homeassistant==2025.9.4.
+# The next plugin release, 0.13.282, tracks Home Assistant 2025.10.0b0.
+#
+# Transitive test plugins and Home Assistant dependencies stay at the versions
+# published by these two releases. Do not loosen either pin.
+
+homeassistant==2025.9.4
+pytest-homeassistant-custom-component==0.13.281

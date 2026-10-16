@@ -1,0 +1,46 @@
+name: Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "codex/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Home Assistant 2025.9.4
+    runs-on: ubuntu-24.04
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.13.2"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-test.txt
+
+      - name: Print installed versions
+        run: |
+          python -c "import sys; print(sys.version)"
+          python -m pip show homeassistant pytest pytest-homeassistant-custom-component
+          python -c "from importlib.metadata import version; assert version('homeassistant') == '2025.9.4', version('homeassistant'); assert version('pytest-homeassistant-custom-component') == '0.13.281', version('pytest-homeassistant-custom-component')"
+
+      - name: Assert State.last_reported
+        run: |
+          python -c "import inspect; from homeassistant.core import State; signature = inspect.signature(State.__init__); assert 'last_reported' in signature.parameters, signature; state = State('sensor.ci_probe', '0'); assert state.last_reported is not None; print('State.last_reported', state.last_reported.isoformat())"
+
+      - name: Run tests
+        run: python -B -m pytest tests -q --tb=line -p no:cacheprovider
