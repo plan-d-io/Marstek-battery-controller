@@ -128,7 +128,7 @@ async def test_first_refresh_cannot_write_during_restart_grace(hass) -> None:
     _publish(hass)
     coordinator.set_pd_grid_deadband(0)
     coordinator.set_mode(const.MODE_SELF_CONSUMPTION)
-    await coordinator.async_config_entry_first_refresh()
+    await coordinator.async_refresh()
     await hass.async_block_till_done()
     assert writer.sends == []
     assert writer.cleanups == 0
@@ -273,13 +273,16 @@ async def test_readbacks_reconcile_only_when_fresh_and_newer_than_the_write(hass
     freezer.move_to("2026-04-27 12:00:00+00:00")
     coordinator, _writer = await _coordinator(hass)
     _allow_writes(coordinator)
-    coordinator.set_mode(const.MODE_SELF_CONSUMPTION)
+    coordinator._mode = const.MODE_SELF_CONSUMPTION
     coordinator._session.kind = "pd"
     _publish(hass, force="discharge", discharge="400", charge="0")
     adopted = coordinator._reported_observation(0.0, dt_util.utcnow())
     assert adopted.command_w == 400
     assert adopted.coherent is True
     assert adopted.fresh is True
+    assert coordinator._session.ledger.in_flight_w is None
+    assert coordinator._session.ledger.last_success_mono is None
+    assert coordinator._session._last_reported_id is None
     assert coordinator._session.consider_reported(adopted, now_mono=0.0) is True
     assert coordinator._session.ledger.accepted_w == 400
     assert coordinator._session.pd.last_direction == 1
@@ -500,6 +503,28 @@ async def test_failed_released_cleanup_retries_once(hass) -> None:
     assert writer.cleanups == 2
     assert peak == 1
     assert coordinator._modbus_breaker_until_mono is None
+    assert coordinator._released_cleanup_task is None
+    assert coordinator._command_task is None
+
+
+async def test_finished_owned_tasks_are_cleared(hass) -> None:
+    """A task that finishes on the next loop turn must not stay stored."""
+    coordinator, writer = await _coordinator(hass)
+    _allow_writes(coordinator)
+    coordinator._mode = const.MODE_SELF_CONSUMPTION
+    coordinator._dispatch_plan(_command(100))
+    await hass.async_block_till_done()
+    assert writer.sends == [100]
+    assert coordinator._command_task is None
+    assert coordinator._released_cleanup_task is None
+
+    released, released_writer = await _coordinator(hass)
+    _allow_writes(released)
+    released.ensure_released_cleanup()
+    await hass.async_block_till_done()
+    assert released_writer.cleanups == 1
+    assert released._released_cleanup_task is None
+    assert released._command_task is None
 
 
 async def test_unknown_stale_soc_sends_one_explicit_zero(hass, freezer) -> None:

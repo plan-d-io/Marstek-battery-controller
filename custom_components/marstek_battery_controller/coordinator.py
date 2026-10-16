@@ -317,7 +317,8 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._released_cleanup_task is not None and not self._released_cleanup_task.done():
             return
         self._released_cleanup_task = self.hass.async_create_task(
-            self._async_released_cleanup_when_able()
+            self._async_released_cleanup_when_able(),
+            eager_start=False,
         )
 
     @callback
@@ -1094,7 +1095,10 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._session.explicit_stale_zero = False
         self._active_dispatch = spec
         self._queued_dispatch = None
-        self._command_task = self.hass.async_create_task(self._async_write_command())
+        self._command_task = self.hass.async_create_task(
+            self._async_write_command(),
+            eager_start=False,
+        )
 
     async def _async_write_command(self) -> None:
         """Send the reserved command, then at most the newest command queued behind it."""
