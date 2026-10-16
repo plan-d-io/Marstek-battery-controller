@@ -35,8 +35,8 @@ jobs:
       - name: Print installed versions
         run: |
           python -c "import sys; print(sys.version)"
-          python -m pip show homeassistant pytest pytest-homeassistant-custom-component
-          python -c "from importlib.metadata import version; assert version('homeassistant') == '2025.9.4', version('homeassistant'); assert version('pytest-homeassistant-custom-component') == '0.13.281', version('pytest-homeassistant-custom-component')"
+          python -m pip show homeassistant pytest pytest-homeassistant-custom-component aiodns pycares
+          python -c "from importlib.metadata import version; assert version('homeassistant') == '2025.9.4', version('homeassistant'); assert version('pytest-homeassistant-custom-component') == '0.13.281', version('pytest-homeassistant-custom-component'); assert version('aiodns') == '3.5.0', version('aiodns'); assert version('pycares') == '4.11.0', version('pycares')"
 
       - name: Assert State.last_reported
         run: |

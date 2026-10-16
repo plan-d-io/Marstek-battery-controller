@@ -6,7 +6,13 @@
 # The next plugin release, 0.13.282, tracks Home Assistant 2025.10.0b0.
 #
 # Transitive test plugins and Home Assistant dependencies stay at the versions
-# published by these two releases. Do not loosen either pin.
+# published by these two releases. Do not loosen those pins.
+#
+# Home Assistant 2025.9.4 pins aiodns==3.5.0. That aiodns release only declares
+# pycares>=4.9.0. pycares 5 removed the legacy result attributes that
+# aiodns 3.5.0 imports, including ares_query_a_result. pycares 4.11.0 is the
+# last 4.x release and is pinned so pip cannot select pycares 5.
 
 homeassistant==2025.9.4
 pytest-homeassistant-custom-component==0.13.281
+pycares==4.11.0
