@@ -20,6 +20,12 @@ from .command_ledger import (
     consider_battery_delivery,
     decide_actuator_write,
 )
+from .ev_feedback import (
+    EvPowerVerdict,
+    ev_exclusion_feedback,
+    normalize_ev_power,
+    unusable_ev_feedback,
+)
 from .pd_controller import (
     DEFAULT_DEADBAND_W,
     PD_DEADBAND_MAX_W,
@@ -27,11 +33,12 @@ from .pd_controller import (
     PD_DEADBAND_STEP_W,
     PDParams,
     PDState,
+    clear_pd_input_identity,
     control_grid,
     reanchor_pd_state,
     reset_pd_state,
 )
-from .publications import PublicationTracker
+from .publications import PublicationTracker, Sample
 
 _NEUTRAL_FORCE_MODES = frozenset({"stop", "standby", "neutral", "off", "idle"})
 _PD_MODES = frozenset(
@@ -42,6 +49,9 @@ _PD_MODES = frozenset(
     }
 )
 _FROZEN_KINDS = frozenset({"boost_fixed", "manual", "released"})
+_BASIS_RAW = "raw"
+_BASIS_KNOWN_EV = "known_ev"
+_BASIS_GUARDED_EV = "guarded_ev"
 
 
 def normalize_pd_grid_deadband(value: float) -> float:
@@ -109,6 +119,8 @@ class SessionSettings:
     now: datetime
     # False when SoC has no fresh publication. Permissions must not use it.
     soc_fresh: bool = True
+    # False keeps the raw-grid PD path, including for callers that omit it.
+    exclude_ev: bool = False
 
 
 @dataclass(frozen=True)
@@ -124,7 +136,10 @@ class ReportedObservation:
 
 @dataclass(frozen=True)
 class ChannelSample:
-    """One grid or battery observation offered to the publication tracker."""
+    """One grid, battery, or EV observation offered to the publication tracker.
+
+    ``value_w`` is watts for every channel, including EV power.
+    """
 
     value_w: float | None
     publication_id: str | None = None
@@ -313,6 +328,44 @@ def _pd_policy(
     )
 
 
+@dataclass(frozen=True)
+class _EvExclusionSelection:
+    """PD permissions and, when needed, one adjusted feedback sample."""
+
+    basis: str
+    allow_discharge: bool
+    allow_charge: bool
+    feedback_w: float | None = None
+    publication_id: str | None = None
+    source_mono: float | None = None
+
+
+def _observation_token(sample: Sample) -> str:
+    """Stable token for one accepted observation. Publication id wins."""
+    if sample.publication_id:
+        return f"id:{sample.publication_id}"
+    if sample.source_mono is not None:
+        return f"src:{float(sample.source_mono)!r}"
+    return "missing"
+
+
+def _composite_feedback_identity(
+    namespace: str,
+    parts: tuple[tuple[str, Sample], ...],
+) -> tuple[str, float]:
+    """Namespaced identity and the newest source time of the contributing samples.
+
+    The same accepted observations always produce the same identity. Python's
+    randomized ``hash()`` is not used, and the namespace cannot collide with a
+    raw grid publication id.
+    """
+    if any(sample.source_mono is None for _, sample in parts):
+        raise ValueError("adjusted EV feedback is missing an accepted observation time")
+    body = "|".join(f"{name}={_observation_token(sample)}" for name, sample in parts)
+    source = max(float(sample.source_mono) for _, sample in parts if sample.source_mono is not None)
+    return f"{namespace}|{body}", source
+
+
 class BatteryControlSession:
     """PD state, publications, and the one-command ledger for one entry."""
 
@@ -325,6 +378,7 @@ class BatteryControlSession:
         self._last_reported_id: str | None = None
         self._stale_soc_zero_latched = False
         self.explicit_stale_zero = False
+        self._feedback_basis: str | None = None
 
     def pd_params(self, settings: SessionSettings) -> PDParams:
         """Send interval is the ordinary opportunity gate. Deadband is the entity."""
@@ -500,6 +554,7 @@ class BatteryControlSession:
         now_mono: float,
         grid: ChannelSample,
         battery: ChannelSample,
+        ev: ChannelSample | None = None,
         reported_command_w: int | None = None,
         reported: ReportedObservation | None = None,
         opportunity: bool = True,
@@ -507,6 +562,7 @@ class BatteryControlSession:
         """Publish inputs, apply policy, and choose at most one command to send."""
         self._publish("grid", grid, now_mono)
         self._publish("battery", battery, now_mono)
+        self._publish_ev(ev, now_mono)
         reported_for_decide, reported_known = self._ingest_reported(
             reported,
             reported_command_w,
@@ -569,14 +625,33 @@ class BatteryControlSession:
         interval_open = self._interval_open(now_mono, params.min_interval_s)
         stale = False
         if policy.kind == "pd":
+            allow_charge = policy.allow_charge
+            allow_discharge = policy.allow_discharge
+            feedback_w: float | None = None
+            feedback_publication_id: str | None = None
+            feedback_source_mono: float | None = None
+            if settings.exclude_ev:
+                selection = self._ev_exclusion_selection(now_mono)
+                allow_charge = allow_charge and selection.allow_charge
+                allow_discharge = allow_discharge and selection.allow_discharge
+                self._use_feedback_basis(selection.basis)
+                if selection.feedback_w is not None:
+                    feedback_w = selection.feedback_w
+                    feedback_publication_id = selection.publication_id
+                    feedback_source_mono = selection.source_mono
+            else:
+                self._use_feedback_basis(_BASIS_RAW)
             result = control_grid(
                 self.pd,
                 params,
                 self.publications,
                 now_mono=now_mono,
                 opportunity=opportunity,
-                allow_charge=policy.allow_charge,
-                allow_discharge=policy.allow_discharge,
+                allow_charge=allow_charge,
+                allow_discharge=allow_discharge,
+                feedback_w=feedback_w,
+                feedback_publication_id=feedback_publication_id,
+                feedback_source_mono=feedback_source_mono,
             )
             proposed = result.proposed_command_w
             stale = result.reason_code == "stale_input"
@@ -668,6 +743,96 @@ class BatteryControlSession:
         else:
             reset_pd_state(self.pd)
         self.ledger.reanchor_to_measurement()
+
+    def _publish_ev(self, sample: ChannelSample | None, now_mono: float) -> None:
+        """Store the accepted EV sample, or mark the channel unavailable."""
+        if sample is None:
+            self.publications.mark_unavailable("ev")
+            return
+        self._publish("ev", sample, now_mono)
+
+    def _use_feedback_basis(self, basis: str) -> None:
+        """Remember the PD feedback basis and clear its identity once on a change.
+
+        The first basis does not clear anything. Repeating the current basis
+        does not either. This does not reset the controller.
+        """
+        if self._feedback_basis == basis:
+            return
+        if self._feedback_basis is not None:
+            clear_pd_input_identity(self.pd)
+        self._feedback_basis = basis
+
+    def _ev_exclusion_selection(self, now_mono: float) -> _EvExclusionSelection:
+        """Choose raw, known-EV, or guarded feedback from accepted observations.
+
+        Usable EV power of exactly 0 W is the ordinary raw-grid path and does
+        not need a battery measurement. Positive EV power uses the pure
+        exclusion model. Unusable EV power, or positive EV power without a
+        fresh battery measurement, uses the guarded policy.
+        """
+        grid = self.publications.grid
+        battery = self.publications.battery
+        ev = self.publications.ev
+        grid_fresh = grid.value is not None and self.publications.grid_is_fresh(now_mono)
+        if not self.publications.ev_is_usable() or ev.value is None:
+            return self._guarded_ev_selection(grid, grid_fresh)
+        normalized = normalize_ev_power(ev.value, "W")
+        if normalized.verdict is EvPowerVerdict.ZERO:
+            return _EvExclusionSelection(_BASIS_RAW, True, True)
+        if normalized.verdict is not EvPowerVerdict.POSITIVE or normalized.watts is None:
+            return self._guarded_ev_selection(grid, grid_fresh)
+        battery_usable = (
+            battery.available
+            and battery.value is not None
+            and self.publications.battery_is_fresh(now_mono)
+        )
+        if not battery_usable or grid.value is None:
+            return self._guarded_ev_selection(grid, grid_fresh)
+        decision = ev_exclusion_feedback(
+            float(grid.value),
+            float(battery.value),
+            normalized,
+            grid_fresh=grid_fresh,
+        )
+        if decision.feedback_w is None:
+            return _EvExclusionSelection(
+                _BASIS_GUARDED_EV,
+                decision.allow_discharge,
+                decision.allow_charge,
+            )
+        publication_id, source_mono = _composite_feedback_identity(
+            "ev-known",
+            (("grid", grid), ("battery", battery), ("ev", ev)),
+        )
+        return _EvExclusionSelection(
+            _BASIS_KNOWN_EV,
+            decision.allow_discharge,
+            decision.allow_charge,
+            decision.feedback_w,
+            publication_id,
+            source_mono,
+        )
+
+    def _guarded_ev_selection(self, grid: Sample, grid_fresh: bool) -> _EvExclusionSelection:
+        """Unusable-EV policy. Fresh export may charge from the raw grid value."""
+        grid_w = 0.0 if grid.value is None else float(grid.value)
+        decision = unusable_ev_feedback(grid_w, grid_fresh=grid_fresh and grid.value is not None)
+        if decision.feedback_w is None:
+            return _EvExclusionSelection(
+                _BASIS_GUARDED_EV,
+                decision.allow_discharge,
+                decision.allow_charge,
+            )
+        publication_id, source_mono = _composite_feedback_identity("ev-guard", (("grid", grid),))
+        return _EvExclusionSelection(
+            _BASIS_GUARDED_EV,
+            decision.allow_discharge,
+            decision.allow_charge,
+            decision.feedback_w,
+            publication_id,
+            source_mono,
+        )
 
     def _publish(self, channel: str, sample: ChannelSample, now_mono: float) -> None:
         if not sample.available or sample.value_w is None:
