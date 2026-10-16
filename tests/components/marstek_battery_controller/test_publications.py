@@ -90,6 +90,66 @@ def test_cadence_extends_freshness_for_a_slow_meter() -> None:
     assert tracker.grid_is_fresh(10.0)
 
 
+def test_ev_publication_stays_usable_without_a_freshness_window() -> None:
+    tracker = PublicationTracker()
+    recorded = tracker.publish(
+        "ev", 7000.0, source_mono=1.0, receive_mono=1.0, publication_id="ev-1"
+    )
+    assert recorded.recorded
+    assert recorded.new_feedback
+    assert tracker.ev.value == 7000.0
+    assert tracker.ev_is_usable()
+
+    repeated = tracker.publish(
+        "ev", 100.0, source_mono=80.0, receive_mono=80.0, publication_id="ev-1"
+    )
+    assert repeated.recorded is False
+    assert repeated.new_feedback is False
+    assert tracker.ev.value == 7000.0
+
+    older = tracker.publish(
+        "ev", 50.0, source_mono=0.5, receive_mono=90.0, publication_id="ev-old"
+    )
+    assert older.recorded is False
+    assert tracker.ev.value == 7000.0
+    assert tracker.ev.publication_id == "ev-1"
+
+    assert tracker.ev_is_usable()
+    assert tracker.ev.age_s(5.0) == 4.0
+    assert tracker.ev.age_s(120.0) == 119.0
+    assert tracker.ev_is_usable()
+
+    tracker.mark_unavailable("ev")
+    assert tracker.ev_is_usable() is False
+    assert tracker.ev.value is None
+    assert tracker.ev.available is False
+
+    restored = tracker.publish(
+        "ev", 4000.0, source_mono=130.0, receive_mono=130.0, publication_id="ev-2"
+    )
+    assert restored.recorded
+    assert tracker.ev_is_usable()
+    assert tracker.ev.value == 4000.0
+    assert tracker.ev.age_s(190.0) == 60.0
+
+
+def test_ev_channel_does_not_change_grid_battery_or_soc_freshness() -> None:
+    tracker = PublicationTracker()
+    tracker.publish("grid", 10.0, source_mono=0.0, receive_mono=0.0, publication_id="g")
+    tracker.publish("battery", 20.0, source_mono=0.0, receive_mono=0.0, publication_id="b")
+    tracker.publish("soc", 40.0, source_mono=0.0, receive_mono=0.0, publication_id="s")
+    tracker.publish("ev", 7000.0, source_mono=0.0, receive_mono=0.0, publication_id="e")
+
+    assert tracker.grid_is_fresh(5.0)
+    assert tracker.grid_is_fresh(5.1) is False
+    assert tracker.battery_is_fresh(10.0)
+    assert tracker.battery_is_fresh(10.1) is False
+    assert tracker.soc_is_fresh(30.0)
+    assert tracker.soc_is_fresh(30.1) is False
+    assert tracker.ev_is_usable()
+    assert tracker.ev.age_s(120.0) == 120.0
+
+
 def test_unknown_channel_is_rejected() -> None:
     tracker = PublicationTracker()
     try:

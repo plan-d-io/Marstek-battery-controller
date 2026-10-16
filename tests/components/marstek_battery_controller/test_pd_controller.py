@@ -18,6 +18,7 @@ from custom_components.marstek_battery_controller.pd_controller import (
     PD_DEADBAND_STEP_W,
     PDParams,
     PDState,
+    clear_pd_input_identity,
     control_grid,
     note_accepted_command,
     pd_step,
@@ -940,6 +941,340 @@ def test_huge_finite_kp_stays_inside_the_open_loop_cap() -> None:
     assert math.isfinite(result.p_term)
     assert result.p_term == pytest.approx(1000.0)
     assert result.proposed_command_w == 1000
+
+
+def _grid_identity(tracker: PublicationTracker) -> tuple[object, ...]:
+    sample = tracker.grid
+    return (
+        sample.value,
+        sample.source_mono,
+        sample.receive_mono,
+        sample.publication_id,
+        sample.available,
+        sample.observed_cadence_s,
+    )
+
+
+def test_omitted_feedback_override_matches_the_raw_grid_path() -> None:
+    def run(**kwargs: object):
+        state = PDState()
+        tracker = PublicationTracker()
+        tracker.publish("grid", 1000.0, source_mono=0.0, receive_mono=0.0, publication_id="g")
+        result = control_grid(
+            state,
+            PDParams(kd=0.0),
+            tracker,
+            now_mono=0.0,
+            **kwargs,  # type: ignore[arg-type]
+        )
+        return result, state
+
+    plain, plain_state = run()
+    explicit, explicit_state = run(
+        feedback_w=None,
+        feedback_publication_id=None,
+        feedback_source_mono=None,
+    )
+    assert plain == explicit
+    assert plain_state == explicit_state
+    assert plain.integrate_applied
+    assert plain_state.last_publication_id == "g"
+    assert plain.proposed_command_w == 175
+
+
+def test_new_feedback_on_the_same_grid_integrates_once() -> None:
+    state = PDState()
+    params = PDParams(kd=0.0, min_interval_s=1.0, max_power_change_w=5000.0)
+    tracker = PublicationTracker()
+    tracker.publish("grid", 100.0, source_mono=0.0, receive_mono=0.0, publication_id="g0")
+    tracker.publish("grid", 100.0, source_mono=1.0, receive_mono=1.0, publication_id="g1")
+    identity = _grid_identity(tracker)
+    first = control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=1.0,
+        feedback_w=2000.0,
+        feedback_publication_id="f1",
+        feedback_source_mono=1.0,
+    )
+    assert first.integrate_applied
+    assert state.last_publication_id == "f1"
+    assert state.requested_w > 300
+    assert _grid_identity(tracker) == identity
+    assert tracker.grid.new_feedback is False
+    assert tracker.last_integrated_grid_publication_id == "g1"
+
+    repeat = control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=2.0,
+        feedback_w=2000.0,
+        feedback_publication_id="f1",
+        feedback_source_mono=1.0,
+    )
+    assert repeat.integrate_applied is False
+    assert state.last_integrate_mono == 1.0
+    assert state.requested_w == first.proposed_command_w
+
+
+def test_later_feedback_publication_integrates_and_an_older_one_does_not() -> None:
+    state = PDState()
+    params = PDParams(kd=0.0, min_interval_s=1.0, max_power_change_w=5000.0)
+    tracker = PublicationTracker()
+    tracker.publish("grid", 100.0, source_mono=0.0, receive_mono=0.0, publication_id="g")
+    control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=0.0,
+        feedback_w=1000.0,
+        feedback_publication_id="f1",
+        feedback_source_mono=0.0,
+    )
+    held = state.requested_w
+    same_time = control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=1.0,
+        feedback_w=4000.0,
+        feedback_publication_id="f-same-time",
+        feedback_source_mono=0.0,
+    )
+    assert same_time.integrate_applied is False
+    assert state.requested_w == held
+    assert state.last_publication_id == "f1"
+
+    older = control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=2.0,
+        feedback_w=4000.0,
+        feedback_publication_id="f-older",
+        feedback_source_mono=-1.0,
+    )
+    assert older.integrate_applied is False
+    assert state.last_publication_id == "f1"
+
+    later = control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=3.0,
+        feedback_w=2000.0,
+        feedback_publication_id="f2",
+        feedback_source_mono=3.0,
+    )
+    assert later.integrate_applied
+    assert state.last_publication_id == "f2"
+    assert tracker.grid.publication_id == "g"
+    assert tracker.grid.value == 100.0
+
+
+def test_stale_grid_rejects_feedback_without_integrating() -> None:
+    state = PDState()
+    tracker = PublicationTracker()
+    tracker.publish("grid", 1000.0, source_mono=0.0, receive_mono=0.0, publication_id="g")
+    result = control_grid(
+        state,
+        PDParams(kd=0.0),
+        tracker,
+        now_mono=6.0,
+        feedback_w=2000.0,
+        feedback_publication_id="f",
+        feedback_source_mono=6.0,
+    )
+    assert result.integrate_applied is False
+    assert result.reason_code == "stale_input"
+    assert state.last_publication_id is None
+    assert state.requested_w == 0
+    assert tracker.grid.value == 1000.0
+    assert tracker.grid.publication_id == "g"
+
+
+def test_feedback_waits_for_the_interval_gate_without_being_consumed() -> None:
+    state = PDState()
+    params = PDParams(kd=0.0, min_interval_s=5.0, max_power_change_w=5000.0)
+    tracker = PublicationTracker()
+    tracker.publish("grid", 100.0, source_mono=0.0, receive_mono=0.0, publication_id="g")
+    opened = control_grid(state, params, tracker, now_mono=0.0)
+    assert opened.integrate_applied
+    frozen = state.requested_w
+    closed = control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=1.0,
+        feedback_w=2000.0,
+        feedback_publication_id="f1",
+        feedback_source_mono=1.0,
+    )
+    assert closed.integrate_applied is False
+    assert closed.reason_code == "interval_gate"
+    assert state.requested_w == frozen
+    assert state.last_publication_id == "g"
+    nxt = control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=5.0,
+        feedback_w=2000.0,
+        feedback_publication_id="f1",
+        feedback_source_mono=1.0,
+    )
+    assert nxt.integrate_applied
+    assert state.last_publication_id == "f1"
+    assert state.requested_w - frozen > 100
+    repeat = control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=5.0,
+        feedback_w=2000.0,
+        feedback_publication_id="f1",
+        feedback_source_mono=1.0,
+    )
+    assert repeat.integrate_applied is False
+
+
+def test_newer_raw_grid_integrates_after_adjusted_feedback() -> None:
+    state = PDState()
+    params = PDParams(kd=0.0, min_interval_s=1.0, max_power_change_w=5000.0)
+    tracker = PublicationTracker()
+    tracker.publish("grid", 100.0, source_mono=0.0, receive_mono=0.0, publication_id="g0")
+    adjusted = control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=0.0,
+        feedback_w=2000.0,
+        feedback_publication_id="f1",
+        feedback_source_mono=0.0,
+    )
+    assert adjusted.integrate_applied
+    tracker.publish("grid", 400.0, source_mono=2.0, receive_mono=2.0, publication_id="g1")
+    raw = control_grid(state, params, tracker, now_mono=2.0)
+    assert raw.integrate_applied
+    assert state.last_publication_id == "g1"
+    assert tracker.grid.value == 400.0
+
+
+def test_force_zero_and_permission_block_ignore_feedback_integration() -> None:
+    state = PDState()
+    params = PDParams(kd=0.0, min_interval_s=1.0)
+    tracker = PublicationTracker()
+    tracker.publish("grid", 1000.0, source_mono=0.0, receive_mono=0.0, publication_id="g")
+    state.requested_w = 400
+    stopped = control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=0.0,
+        force_zero=True,
+        feedback_w=2000.0,
+        feedback_publication_id="f-stop",
+        feedback_source_mono=0.0,
+    )
+    assert stopped.proposed_command_w == 0
+    assert stopped.integrate_applied is False
+    assert state.requested_w == 0
+
+    state = PDState()
+    tracker = PublicationTracker()
+    tracker.publish("grid", 1000.0, source_mono=0.0, receive_mono=0.0, publication_id="g2")
+    first = control_grid(state, params, tracker, now_mono=0.0)
+    assert first.integrate_applied
+    assert state.requested_w > 0
+    tracker.publish("grid", 1000.0, source_mono=1.0, receive_mono=1.0, publication_id="g3")
+    blocked = control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=1.0,
+        allow_discharge=False,
+        feedback_w=2000.0,
+        feedback_publication_id="f-block",
+        feedback_source_mono=1.0,
+    )
+    assert blocked.proposed_command_w == 0
+    assert blocked.reason_code == "discharge_blocked"
+    assert blocked.integrate_applied is False
+    assert state.last_publication_id == "g2"
+
+
+def test_incomplete_and_non_finite_feedback_overrides_are_rejected() -> None:
+    state = PDState()
+    params = PDParams()
+    tracker = PublicationTracker()
+    tracker.publish("grid", 100.0, source_mono=0.0, receive_mono=0.0, publication_id="g")
+    with pytest.raises(ValueError):
+        control_grid(state, params, tracker, now_mono=0.0, feedback_w=10.0)
+    with pytest.raises(ValueError):
+        control_grid(
+            state,
+            params,
+            tracker,
+            now_mono=0.0,
+            feedback_w=math.nan,
+            feedback_publication_id="f",
+            feedback_source_mono=0.0,
+        )
+    with pytest.raises(ValueError):
+        control_grid(
+            state,
+            params,
+            tracker,
+            now_mono=0.0,
+            feedback_w=10.0,
+            feedback_publication_id="f",
+            feedback_source_mono=math.inf,
+        )
+    assert state.last_publication_id is None
+    assert tracker.grid.value == 100.0
+
+
+def test_clearing_pd_input_identity_keeps_the_request_and_the_interval_gate() -> None:
+    state = PDState()
+    params = PDParams(kd=0.0, min_interval_s=5.0, max_power_change_w=5000.0)
+    tracker = PublicationTracker()
+    tracker.publish("grid", 1000.0, source_mono=10.0, receive_mono=10.0, publication_id="g0")
+    control_grid(
+        state,
+        params,
+        tracker,
+        now_mono=10.0,
+        feedback_w=1000.0,
+        feedback_publication_id="f1",
+        feedback_source_mono=10.0,
+    )
+    note_accepted_command(state, state.requested_w)
+    requested = state.requested_w
+    direction = state.last_direction
+    filtered = state.grid_filtered
+    opportunity = state.last_opportunity_mono
+    assert requested > 0
+    assert direction == 1
+    clear_pd_input_identity(state)
+    assert state.requested_w == requested
+    assert state.last_direction == direction
+    assert state.grid_filtered == filtered
+    assert state.last_opportunity_mono == opportunity
+    assert state.last_publication_id is None
+    assert state.last_source_mono is None
+
+    tracker.publish("grid", 1000.0, source_mono=12.0, receive_mono=12.0, publication_id="g1")
+    waiting = control_grid(state, params, tracker, now_mono=12.0)
+    assert waiting.integrate_applied is False
+    assert waiting.reason_code == "interval_gate"
+    assert state.requested_w == requested
+    assert state.last_direction == direction
+    opened = control_grid(state, params, tracker, now_mono=15.0)
+    assert opened.integrate_applied
+    assert state.last_publication_id == "g1"
+    assert state.last_direction == direction
 
 
 def test_kp_zero_adds_no_proportional_correction() -> None:

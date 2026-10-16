@@ -177,6 +177,17 @@ def zero_cross_hold_s(params: PDParams) -> float:
     return max(DEFAULT_ZERO_CROSS_HOLD_S, 2.0 * params.battery_actuator_latency_s)
 
 
+def clear_pd_input_identity(state: PDState) -> None:
+    """Forget only the identity of the last PD input.
+
+    The next raw-grid or feedback sample can then be accepted on its own
+    publication. The request, accepted direction, filters, zero-cross memory,
+    and the opportunity gate stay as they are. This is not ``reset_pd_state``.
+    """
+    state.last_publication_id = None
+    state.last_source_mono = None
+
+
 def reset_pd_state(state: PDState) -> None:
     """Clear filter, request, publication, and zero-cross memory."""
     state.grid_filtered = None
@@ -630,6 +641,40 @@ def _permission_block(
     )
 
 
+def _feedback_override(
+    feedback_w: float | None,
+    feedback_publication_id: str | None,
+    feedback_source_mono: float | None,
+) -> tuple[float, str, float] | None:
+    """Return a complete override, or None when the caller did not supply one."""
+    supplied = (
+        feedback_w is not None,
+        feedback_publication_id is not None,
+        feedback_source_mono is not None,
+    )
+    if not any(supplied):
+        return None
+    if not all(supplied):
+        raise ValueError(
+            "feedback override requires feedback_w, feedback_publication_id, "
+            "and feedback_source_mono together"
+        )
+    if (
+        isinstance(feedback_w, bool)
+        or isinstance(feedback_source_mono, bool)
+        or not isinstance(feedback_w, (int, float))
+        or not isinstance(feedback_source_mono, (int, float))
+        or not isinstance(feedback_publication_id, str)
+        or feedback_publication_id == ""
+    ):
+        raise ValueError("feedback override watts, publication id, and source time are invalid")
+    watts = float(feedback_w)
+    source = float(feedback_source_mono)
+    if not math.isfinite(watts) or not math.isfinite(source):
+        raise ValueError("feedback override watts and source time must be finite")
+    return watts, feedback_publication_id, source
+
+
 def control_grid(
     state: PDState,
     params: PDParams,
@@ -641,6 +686,9 @@ def control_grid(
     force_zero: bool = False,
     allow_charge: bool = True,
     allow_discharge: bool = True,
+    feedback_w: float | None = None,
+    feedback_publication_id: str | None = None,
+    feedback_source_mono: float | None = None,
 ) -> PDStepResult:
     """Run one control observation against the tracker's newest grid sample.
 
@@ -650,22 +698,43 @@ def control_grid(
     opportunity uses the newest one. A watchdog (``opportunity`` false) may
     repeat the current request or apply a safety block. It does not integrate.
     Definitive staleness returns zero and writes nothing.
+
+    ``feedback_w``, ``feedback_publication_id``, and ``feedback_source_mono``
+    are an optional substitute for the value and identity passed into
+    ``pd_step``. They must be supplied together. Raw grid freshness still
+    decides whether that step may run, and the tracked grid sample is not
+    overwritten. Omit all three to keep the raw-grid path.
     """
+    override = _feedback_override(feedback_w, feedback_publication_id, feedback_source_mono)
     value = tracker.grid.value
     fresh = value is not None and tracker.grid_is_fresh(now_mono)
     grid = 0.0 if value is None else float(value)
     source = tracker.grid.source_mono
     publication_id = tracker.grid.publication_id
     eligible = tracker.should_integrate_grid(now_mono)
+    step_grid = grid
+    step_source = source
+    step_publication_id = publication_id
+    if override is not None and fresh:
+        step_grid, step_publication_id, step_source = override
+        eligible = _can_integrate(
+            state,
+            integrate=True,
+            fresh=True,
+            publication_id=step_publication_id,
+            source_mono=step_source,
+        )
+    elif override is not None:
+        eligible = False
 
     if force_zero:
         result = pd_step(
             state,
             params,
-            grid_raw_w=grid,
+            grid_raw_w=step_grid,
             now_mono=now_mono,
-            source_mono=source,
-            publication_id=publication_id,
+            source_mono=step_source,
+            publication_id=step_publication_id,
             fresh=fresh,
             integrate=eligible,
             target_grid_w=target_grid_w,
@@ -681,10 +750,10 @@ def control_grid(
         return pd_step(
             state,
             params,
-            grid_raw_w=grid,
+            grid_raw_w=step_grid,
             now_mono=now_mono,
-            source_mono=source,
-            publication_id=publication_id,
+            source_mono=step_source,
+            publication_id=step_publication_id,
             fresh=False,
             integrate=False,
             target_grid_w=target_grid_w,
@@ -695,7 +764,7 @@ def control_grid(
     blocked = _permission_block(
         state,
         params,
-        grid_raw_w=grid,
+        grid_raw_w=step_grid,
         allow_charge=allow_charge,
         allow_discharge=allow_discharge,
     )
@@ -712,7 +781,7 @@ def control_grid(
         return _read_only_result(
             state,
             params,
-            grid_raw_w=grid,
+            grid_raw_w=step_grid,
             proposed=0 if holding else state.requested_w,
             reason_code="interval_gate",
             zero_cross_hold=holding,
@@ -721,10 +790,10 @@ def control_grid(
     result = pd_step(
         state,
         params,
-        grid_raw_w=grid,
+        grid_raw_w=step_grid,
         now_mono=now_mono,
-        source_mono=source,
-        publication_id=publication_id,
+        source_mono=step_source,
+        publication_id=step_publication_id,
         fresh=True,
         integrate=integrate,
         target_grid_w=target_grid_w,

@@ -3,6 +3,10 @@
 Grid, measured battery power, and battery state of charge each carry their own
 monotonic publication time. A repeated Home Assistant state, an older sample,
 or a sample that is already stale is not a new feedback publication.
+
+The EV channel keeps the same publication identity rules, but a value that has
+been accepted stays usable for as long as the channel is available. That is
+not grid freshness, and it does not feed the grid, battery, or SoC timeouts.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ CADENCE_FRESH_MULT: Final = 3.0
 MIN_OBSERVED_CADENCE_S: Final = 0.2
 MAX_OBSERVED_CADENCE_S: Final = 60.0
 
-CHANNELS: Final[tuple[str, ...]] = ("grid", "battery", "soc")
+CHANNELS: Final[tuple[str, ...]] = ("grid", "battery", "soc", "ev")
 
 
 @dataclass
@@ -65,11 +69,12 @@ class PublishResult:
 
 @dataclass
 class PublicationTracker:
-    """Monotonic publication tracking for grid, battery power, and SoC."""
+    """Monotonic publication tracking for grid, battery power, SoC, and EV power."""
 
     grid: Sample = field(default_factory=Sample)
     battery: Sample = field(default_factory=Sample)
     soc: Sample = field(default_factory=Sample)
+    ev: Sample = field(default_factory=Sample)
     grid_fresh_s: float = DEFAULT_GRID_FRESH_S
     battery_fresh_s: float = DEFAULT_BATTERY_FRESH_S
     soc_fresh_s: float = DEFAULT_SOC_FRESH_S
@@ -132,6 +137,10 @@ class PublicationTracker:
         sample.receive_mono = receive_mono
         sample.publication_id = publication_id
         sample.available = True
+        if channel == "ev":
+            # Usable until mark_unavailable. Age stays diagnostic only.
+            sample.new_feedback = True
+            return PublishResult(recorded=True, new_feedback=True)
         fresh = sample.is_fresh(receive_mono, self._limit(channel))
         sample.new_feedback = fresh
         return PublishResult(recorded=True, new_feedback=fresh)
@@ -151,6 +160,14 @@ class PublicationTracker:
 
     def soc_is_fresh(self, now_mono: float) -> bool:
         return self.soc.is_fresh(now_mono, self.soc_fresh_s)
+
+    def ev_is_usable(self) -> bool:
+        """True while an accepted EV value has not been marked unavailable.
+
+        This does not consult the grid freshness window. Diagnostic age is
+        ``ev.age_s`` and may grow without making the value unusable.
+        """
+        return self.ev.available and self.ev.value is not None and self.ev.source_mono is not None
 
     def should_integrate_grid(self, now_mono: float) -> bool:
         """True only for a fresh grid publication not yet consumed."""
