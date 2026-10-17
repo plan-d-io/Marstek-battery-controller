@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 import logging
 import time as time_mod
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
+from homeassistant.const import ATTR_RESTORED
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, State, callback
 from homeassistant.helpers.event import (
     async_call_later,
@@ -41,6 +42,7 @@ from .pd_session import (
 )
 from .publications import DEFAULT_BATTERY_FRESH_S, DEFAULT_SOC_FRESH_S
 from .discovery import ResolvedEntities
+from .ev_input import effective_exclude_ev, ev_channel_sample, requested_exclude_ev
 from .homewizard_poller import HomeWizardPoller
 from .smoothing import SlidingWindowMean
 from .storage import MarstekStorage
@@ -93,6 +95,7 @@ class CoordinatorRuntimeConfig:
     cap_now_entity_id: str | None
     monthly_peak_entity_id: str | None
     use_internal_cap_now: bool
+    ev_power_entity_id: str | None = None
     grid_power_poller: HomeWizardPoller | None = None
 
 
@@ -205,6 +208,9 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._snapshot_latest_start: datetime | Literal["no_need"] | None = None
 
         self._capacity_tariff_enabled = const.DEFAULT_CAPACITY_TARIFF_ENABLED
+        self._exclude_ev_requested = False
+        self._exclude_ev_persisted = False
+        self._boot_started = dt_util.utcnow()
         self._mode = const.DEFAULT_MODE
         self._inherited_released_uncertainty = self._mode == const.MODE_RELEASED
         self._min_soc = const.DEFAULT_MIN_SOC
@@ -245,6 +251,23 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Enable/disable capacity-tariff logic."""
         self._capacity_tariff_enabled = value
         self._async_recalc()
+
+    def configure_startup_ev(self, entity_id: str | None, options: Mapping[str, Any]) -> None:
+        """Apply the sensor and requested exclusion before the first refresh.
+
+        This does not calculate. Startup calls it before any await so the first
+        control step already sees the configured policy.
+        """
+        self.runtime.ev_power_entity_id = entity_id
+        self._exclude_ev_requested = requested_exclude_ev(options, entity_id)
+        self._exclude_ev_persisted = const.CONF_EXCLUDE_EV in options or entity_id is not None
+
+    def set_exclude_ev_requested(self, value: bool, *, recalc: bool = True) -> None:
+        """Store the requested Exclude EV choice and recalculate."""
+        self._exclude_ev_requested = bool(value)
+        self._exclude_ev_persisted = True
+        if recalc:
+            self._async_recalc()
 
     def set_mode(self, mode: str) -> None:
         """Set operating mode. Entering Released schedules cleanup once."""
@@ -359,6 +382,21 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def current_mode(self) -> str:
         """Current operating mode key (§6)."""
         return self._mode
+
+    @property
+    def exclude_ev_requested(self) -> bool:
+        """The stored Exclude EV choice, whether or not a sensor is configured."""
+        return self._exclude_ev_requested
+
+    @property
+    def ev_sensor_configured(self) -> bool:
+        """True when an EV charging-power entity id is configured."""
+        return self.runtime.ev_power_entity_id is not None
+
+    @property
+    def exclude_ev_effective(self) -> bool:
+        """Requested exclusion while an EV sensor is configured."""
+        return effective_exclude_ev(self._exclude_ev_requested, self.runtime.ev_power_entity_id)
 
     @property
     def capacity_tariff_enabled_flag(self) -> bool:
@@ -534,7 +572,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def as_options_dict(self) -> dict[str, Any]:
         """Serialize coordinator parameters for config entry options."""
-        return {
+        payload = {
             "mode": self._mode,
             "min_soc": self._min_soc,
             "max_soc": self._max_soc,
@@ -553,6 +591,9 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "evening_peak_time": self._peak_window_time.strftime("%H:%M"),
             "passive_floor_time": self._reserve_protection_time.strftime("%H:%M"),
         }
+        if self._exclude_ev_persisted:
+            payload[const.CONF_EXCLUDE_EV] = self._exclude_ev_requested
+        return payload
 
     def persist_entry_options(self, hass: HomeAssistant, entry_id: str) -> None:
         """Merge coordinator parameters into config entry options for restart persistence."""
@@ -646,6 +687,11 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             entities.append(self.runtime.cap_now_entity_id)
         if self.runtime.monthly_peak_entity_id:
             entities.append(self.runtime.monthly_peak_entity_id)
+        if (
+            self.runtime.ev_power_entity_id
+            and self.runtime.ev_power_entity_id not in entities
+        ):
+            entities.append(self.runtime.ev_power_entity_id)
 
         @callback
         def _on_state(event: Event) -> None:
@@ -870,12 +916,14 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             peak_window_deadline=deadline,
             now=now,
             soc_fresh=soc_fresh,
+            exclude_ev=self.exclude_ev_effective,
         )
         plan = self._session.plan(
             settings,
             now_mono=now_mono,
             grid=self._grid_sample(poller, grid_st, now_mono, now_wall),
             battery=self._channel_sample(batt_st if batt_ok else None, now_mono, now_wall),
+            ev=self._ev_sample(now_mono, now_wall),
             reported=self._reported_observation(now_mono, now_wall),
             opportunity=opportunity,
         )
@@ -915,6 +963,31 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 source_mono=poller.latest_mono,
             )
         return self._channel_sample(grid_state, now_mono, now_wall)
+
+    def _ev_sample(self, now_mono: float, now_wall: datetime) -> ChannelSample:
+        """EV publication for this Home Assistant run.
+
+        Grid and battery may fall back from last_reported to last_updated.
+        EV power may not. Invalid telemetry is unavailable immediately and is
+        not remembered from the previous reading.
+        """
+        entity_id = self.runtime.ev_power_entity_id
+        if not entity_id:
+            return ChannelSample(value_w=None, available=False)
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return ChannelSample(value_w=None, available=False)
+        attributes = getattr(state, "attributes", {}) or {}
+        return ev_channel_sample(
+            entity_id=entity_id,
+            raw_state=None if state.state is None else str(state.state),
+            unit=attributes.get("unit_of_measurement"),
+            restored=bool(attributes.get(ATTR_RESTORED)),
+            last_reported=getattr(state, "last_reported", None),
+            ha_start=self._boot_started,
+            now_mono=now_mono,
+            now_wall=now_wall,
+        )
 
     def _channel_sample(
         self,

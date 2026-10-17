@@ -79,10 +79,11 @@
       },
       "optional": {
         "title": "Optionale Sensoren",
-        "description": "Optional für Kapazitätstarif: Viertelstundenmittel und Monatspeak (Leistungssensoren).",
+        "description": "Optional für Kapazitätstarif und EV-Ausschluss: Viertelstundenmittel, Monatspeak und die Ladeleistung des E-Autos. Kapazitätssensoren sind Leistungssensoren. Der EV-Sensor ist der Ladeverbrauch.",
         "data": {
           "cap_now_sensor": "Sensor aktuelle Viertelstundenleistung",
-          "monthly_peak_sensor": "Sensor Monatspeak"
+          "monthly_peak_sensor": "Sensor Monatspeak",
+          "ev_power_entity": "EV-Ladeleistung"
         }
       },
       "parameters": {
@@ -107,7 +108,7 @@
       },
       "init": {
         "title": "Optionen",
-        "description": "Integrationsparameter aktualisieren.",
+        "description": "Integrationsparameter und den optionalen EV-Ladeleistungssensor aktualisieren.",
         "data": {
           "mode": "Modus",
           "min_soc": "Minimal-SoC",
@@ -125,7 +126,8 @@
           "manual_target_soc": "Manuelles Ziel-SoC",
           "manual_power": "Manuelle Leistung",
           "evening_peak_time": "Peak-Fenster Start (HH:MM)",
-          "passive_floor_time": "Reserve-Schutz Start (HH:MM)"
+          "passive_floor_time": "Reserve-Schutz Start (HH:MM)",
+          "ev_power_entity": "EV-Ladeleistung"
         }
       }
     },
@@ -172,7 +174,8 @@
       "manual_power": { "name": "Manuelle Leistung" }
     },
     "switch": {
-      "capacity_tariff_enabled": { "name": "Kapazitätstarif aktiv" }
+      "capacity_tariff_enabled": { "name": "Kapazitätstarif aktiv" },
+      "exclude_ev": { "name": "EV-Verbrauch ausschließen" }
     },
     "time": {
       "peak_window_start": { "name": "Peak-Fenster Start" },

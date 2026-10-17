@@ -16,6 +16,7 @@ from homeassistant.helpers import selector
 from homeassistant.helpers.selector import SelectSelectorMode
 
 from . import const
+from .ev_input import resolve_ev_power_entity, store_ev_sensor_choice
 from .discovery import list_marstek_devices, resolve_roles_for_device
 from .homewizard_discovery import HomeWizardCandidate, list_homewizard_p1_candidates, probe_homewizard
 from .viperrnmc_options import find_marstek_modbus_entry_for_device
@@ -83,6 +84,18 @@ def _manual_toggle_is_on(raw: Any) -> bool:
     return bool(raw)
 
 
+def optional_sensors_schema() -> vol.Schema:
+    """Optional capacity sensors and the EV charging-power sensor."""
+    sensor = _optional_powerish_selector()
+    return vol.Schema(
+        {
+            vol.Optional(const.CONF_CAP_NOW_SENSOR): sensor,
+            vol.Optional(const.CONF_MONTHLY_PEAK_SENSOR): sensor,
+            vol.Optional(const.CONF_EV_POWER): sensor,
+        }
+    )
+
+
 def _optional_powerish_selector() -> selector.EntitySelector:
     """Optional peak / average power sensors (same device_class as grid)."""
     return selector.EntitySelector(
@@ -94,7 +107,11 @@ def _optional_powerish_selector() -> selector.EntitySelector:
 
 
 def _param_schema_defaults(
-    merged: dict[str, Any], *, initial: bool = False
+    merged: dict[str, Any],
+    *,
+    initial: bool = False,
+    include_ev: bool = False,
+    ev_entity: str | None = None,
 ) -> vol.Schema:
     """Voluptuous schema with explicit defaults. Initial setup omits mode and manual fields."""
     d = merged
@@ -309,6 +326,13 @@ def _param_schema_defaults(
         )
     ] = selector.TextSelector()
 
+    if include_ev:
+        if ev_entity:
+            ev_key: Any = vol.Optional(const.CONF_EV_POWER, default=ev_entity)
+        else:
+            ev_key = vol.Optional(const.CONF_EV_POWER)
+        schema_dict[ev_key] = _optional_powerish_selector()
+
     return vol.Schema(schema_dict)
 
 
@@ -330,6 +354,7 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
         self._marstek_setup_offered: bool = False
         self._cap_sensor: str | None = None
         self._monthly_sensor: str | None = None
+        self._ev_sensor: str | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -704,15 +729,11 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """§5.3 — optional sensors."""
-        schema = vol.Schema(
-            {
-                vol.Optional(const.CONF_CAP_NOW_SENSOR): _optional_powerish_selector(),
-                vol.Optional(const.CONF_MONTHLY_PEAK_SENSOR): _optional_powerish_selector(),
-            }
-        )
+        schema = optional_sensors_schema()
         if user_input is not None:
             self._cap_sensor = user_input.get(const.CONF_CAP_NOW_SENSOR)
             self._monthly_sensor = user_input.get(const.CONF_MONTHLY_PEAK_SENSOR)
+            self._ev_sensor = user_input.get(const.CONF_EV_POWER) or None
             return await self.async_step_parameters()
 
         return self.async_show_form(step_id=STEP_ID_OPTIONAL, data_schema=schema)
@@ -760,6 +781,7 @@ class MarstekBatteryConfigFlow(ConfigFlow, domain=const.DOMAIN):
                 const.CONF_GRID_SOURCE_TYPE: self._grid_source,
                 const.CONF_CAP_NOW_SENSOR: self._cap_sensor,
                 const.CONF_MONTHLY_PEAK_SENSOR: self._monthly_sensor,
+                const.CONF_EV_POWER: self._ev_sensor,
             }
             if self._grid_source == const.GRID_SOURCE_EXISTING_SENSOR:
                 data[const.CONF_GRID_POWER] = self._grid_entity
@@ -833,31 +855,42 @@ class MarstekBatteryOptionsFlow(OptionsFlow):
             "passive_floor_time": "13:00",
         }
         merged_in = {**defaults, **self._entry.options}
+        previous_ev = resolve_ev_power_entity(self._entry.options, self._entry.data)
 
         if user_input is not None:
             merged = {**merged_in, **user_input}
+            ev_entity = user_input.get(const.CONF_EV_POWER) or None
             if merged["min_soc"] >= merged["max_soc"]:
                 return self.async_show_form(
                     step_id="init",
-                    data_schema=_param_schema_defaults(merged, initial=False),
+                    data_schema=_param_schema_defaults(
+                        merged, initial=False, include_ev=True, ev_entity=ev_entity
+                    ),
                     errors={"base": "invalid_min_max_soc"},
                 )
             if merged["evening_max_charge_power"] > merged["max_battery_power"]:
                 return self.async_show_form(
                     step_id="init",
-                    data_schema=_param_schema_defaults(merged, initial=False),
+                    data_schema=_param_schema_defaults(
+                        merged, initial=False, include_ev=True, ev_entity=ev_entity
+                    ),
                     errors={"base": "evening_charge_too_high"},
                 )
             if merged["manual_power"] > merged["max_battery_power"]:
                 return self.async_show_form(
                     step_id="init",
-                    data_schema=_param_schema_defaults(merged, initial=False),
+                    data_schema=_param_schema_defaults(
+                        merged, initial=False, include_ev=True, ev_entity=ev_entity
+                    ),
                     errors={"base": "manual_power_too_high"},
                 )
+            store_ev_sensor_choice(merged, user_input, previous_ev)
             return self.async_create_entry(title="", data=merged)
 
         return self.async_show_form(
             step_id="init",
-            data_schema=_param_schema_defaults(merged_in, initial=False),
+            data_schema=_param_schema_defaults(
+                merged_in, initial=False, include_ev=True, ev_entity=previous_ev
+            ),
         )
 

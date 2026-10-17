@@ -79,10 +79,11 @@
       },
       "optional": {
         "title": "Optional sensors",
-        "description": "Optional helpers for capacity tariffs: peak demand for the current quarter-hour and for the current month (power sensors, often from your meter or DSMR integration).",
+        "description": "Optional helpers for capacity tariffs and EV exclusion: peak demand for the current quarter-hour and month, and the EV charging-power sensor. Capacity sensors are power sensors, often from your meter. The EV sensor is the charger's power consumption.",
         "data": {
           "cap_now_sensor": "Peak demand of the current quarter-hour sensor",
-          "monthly_peak_sensor": "Peak demand of the current month sensor"
+          "monthly_peak_sensor": "Peak demand of the current month sensor",
+          "ev_power_entity": "EV charging power"
         }
       },
       "parameters": {
@@ -107,7 +108,7 @@
       },
       "init": {
         "title": "Options",
-        "description": "Update integration parameters.",
+        "description": "Update integration parameters and the optional EV charging-power sensor.",
         "data": {
           "mode": "Mode",
           "min_soc": "Minimum SoC",
@@ -125,7 +126,8 @@
           "manual_target_soc": "Manual target SoC",
           "manual_power": "Manual power",
           "evening_peak_time": "Peak window start (HH:MM)",
-          "passive_floor_time": "Reserve protection start (HH:MM)"
+          "passive_floor_time": "Reserve protection start (HH:MM)",
+          "ev_power_entity": "EV charging power"
         }
       }
     },
@@ -172,7 +174,8 @@
       "manual_power": { "name": "Manual power" }
     },
     "switch": {
-      "capacity_tariff_enabled": { "name": "Capacity tariff enabled" }
+      "capacity_tariff_enabled": { "name": "Capacity tariff enabled" },
+      "exclude_ev": { "name": "Exclude EV consumption" }
     },
     "time": {
       "peak_window_start": { "name": "Peak window start" },

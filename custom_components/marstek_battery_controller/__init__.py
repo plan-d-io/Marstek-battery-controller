@@ -9,6 +9,7 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from . import const
+from .ev_input import resolve_ev_power_entity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,6 +71,8 @@ def _apply_options(coordinator: Any, options: dict[str, Any]) -> None:
         coordinator.set_boost_charge_power(float(options["evening_max_charge_power"]))
     if "capacity_tariff_enabled" in options:
         coordinator.set_capacity_tariff_enabled(bool(options["capacity_tariff_enabled"]))
+    if const.CONF_EXCLUDE_EV in options:
+        coordinator.set_exclude_ev_requested(bool(options[const.CONF_EXCLUDE_EV]))
     if "max_desired_peak" in options:
         coordinator.set_max_desired_peak(float(options["max_desired_peak"]))
     if "manual_target_soc" in options:
@@ -144,12 +147,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         else None
     )
 
+    ev_entity_id = resolve_ev_power_entity(entry.options, entry.data)
     runtime = CoordinatorRuntimeConfig(
         resolved=resolved,
         grid_entity_id=grid_entity_id,
         cap_now_entity_id=entry.data.get(const.CONF_CAP_NOW_SENSOR),
         monthly_peak_entity_id=entry.data.get(const.CONF_MONTHLY_PEAK_SENSOR),
         use_internal_cap_now=not bool(entry.data.get(const.CONF_CAP_NOW_SENSOR)),
+        ev_power_entity_id=ev_entity_id,
     )
 
     coordinator = MarstekBatteryCoordinator(
@@ -159,6 +164,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         storage=storage,
         initial_previous_mode=prev_mode,
     )
+    # Before options setters schedule work and before the first refresh.
+    coordinator.configure_startup_ev(ev_entity_id, entry.options)
 
     _apply_options(coordinator, entry.options)
     coordinator.ensure_released_cleanup()
@@ -207,10 +214,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload coordinator parameters when options change."""
+    """Reload coordinator parameters when options change.
+
+    A new EV entity id reloads the entry so listeners are not left on the old
+    sensor. Persisting the Exclude EV boolean does not reload.
+    """
     from .coordinator import MarstekBatteryCoordinator
 
     coordinator: MarstekBatteryCoordinator = hass.data[const.DOMAIN][entry.entry_id]
+    ev_entity_id = resolve_ev_power_entity(entry.options, entry.data)
+    if ev_entity_id != coordinator.runtime.ev_power_entity_id:
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+        return
     _apply_options(coordinator, entry.options)
     coordinator.ensure_released_cleanup()
 

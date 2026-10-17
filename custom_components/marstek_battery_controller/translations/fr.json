@@ -79,10 +79,11 @@
       },
       "optional": {
         "title": "Capteurs optionnels",
-        "description": "Optionnel pour la capacité tarifaire : puissance moyenne du quart d’heure en cours et pic mensuel (capteurs de puissance).",
+        "description": "Optionnel pour le tarif de capacité et l’exclusion VE : pic du quart d’heure, pic mensuel et puissance de charge du VE. Les capteurs de capacité sont des capteurs de puissance. Le capteur VE est la consommation du chargeur.",
         "data": {
           "cap_now_sensor": "Capteur pic du quart d’heure en cours",
-          "monthly_peak_sensor": "Capteur pic du mois en cours"
+          "monthly_peak_sensor": "Capteur pic du mois en cours",
+          "ev_power_entity": "Puissance de charge VE"
         }
       },
       "parameters": {
@@ -107,7 +108,7 @@
       },
       "init": {
         "title": "Options",
-        "description": "Mettre à jour les paramètres.",
+        "description": "Mettre à jour les paramètres et le capteur optionnel de puissance de charge VE.",
         "data": {
           "mode": "Mode",
           "min_soc": "SoC minimum",
@@ -125,7 +126,8 @@
           "manual_target_soc": "SoC cible manuel",
           "manual_power": "Puissance manuelle",
           "evening_peak_time": "Début fenêtre de pic (HH:MM)",
-          "passive_floor_time": "Début protection réserve (HH:MM)"
+          "passive_floor_time": "Début protection réserve (HH:MM)",
+          "ev_power_entity": "Puissance de charge VE"
         }
       }
     },
@@ -172,7 +174,8 @@
       "manual_power": { "name": "Puissance manuelle" }
     },
     "switch": {
-      "capacity_tariff_enabled": { "name": "Tarif de capacité activé" }
+      "capacity_tariff_enabled": { "name": "Tarif de capacité activé" },
+      "exclude_ev": { "name": "Exclure la consommation VE" }
     },
     "time": {
       "peak_window_start": { "name": "Début fenêtre de pic" },

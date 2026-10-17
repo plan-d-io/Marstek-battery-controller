@@ -79,10 +79,11 @@
       },
       "optional": {
         "title": "Optionele sensoren",
-        "description": "Optioneel voor capaciteitstarief: piekvraag voor het lopende kwartier en voor de lopende maand (vermogensensoren, vaak van uw meter of DSMR-integratie).",
+        "description": "Optioneel voor capaciteitstarief en EV-uitsluiting: piekvraag voor het lopende kwartier en de lopende maand, en het EV-laadvermogen. Capaciteitssensoren zijn vermogensensoren, vaak van uw meter. De EV-sensor is het laadverbruik van de wagen.",
         "data": {
           "cap_now_sensor": "Sensor piekvraag lopende kwartier",
-          "monthly_peak_sensor": "Sensor piekvraag lopende maand"
+          "monthly_peak_sensor": "Sensor piekvraag lopende maand",
+          "ev_power_entity": "EV-laadvermogen"
         }
       },
       "parameters": {
@@ -107,7 +108,7 @@
       },
       "init": {
         "title": "Opties",
-        "description": "Integratieparameters bijwerken.",
+        "description": "Werk integratieparameters en de optionele EV-laadvermogensensor bij.",
         "data": {
           "mode": "Modus",
           "min_soc": "Minimum SoC",
@@ -125,7 +126,8 @@
           "manual_target_soc": "Gewenste SoC (manueel)",
           "manual_power": "Gewenst batterijvermogen (manueel)",
           "evening_peak_time": "Start piekvenster (UU:MM)",
-          "passive_floor_time": "Start reservebescherming (UU:MM)"
+          "passive_floor_time": "Start reservebescherming (UU:MM)",
+          "ev_power_entity": "EV-laadvermogen"
         }
       }
     },
@@ -172,7 +174,8 @@
       "manual_power": { "name": "Gewenst batterijvermogen (manueel)" }
     },
     "switch": {
-      "capacity_tariff_enabled": { "name": "Capaciteitstarief ingeschakeld" }
+      "capacity_tariff_enabled": { "name": "Capaciteitstarief ingeschakeld" },
+      "exclude_ev": { "name": "EV-verbruik uitsluiten" }
     },
     "time": {
       "peak_window_start": { "name": "Start piekvenster" },
