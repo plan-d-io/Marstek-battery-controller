@@ -51,6 +51,7 @@ _PD_MODES = frozenset(
 _FROZEN_KINDS = frozenset({"boost_fixed", "manual", "released"})
 _BASIS_RAW = "raw"
 _BASIS_KNOWN_EV = "known_ev"
+_BASIS_EV_ZERO = "ev_zero"
 _BASIS_GUARDED_EV = "guarded_ev"
 
 
@@ -764,12 +765,14 @@ class BatteryControlSession:
         self._feedback_basis = basis
 
     def _ev_exclusion_selection(self, now_mono: float) -> _EvExclusionSelection:
-        """Choose raw, known-EV, or guarded feedback from accepted observations.
+        """Choose known-EV, EV-zero, or guarded feedback from accepted observations.
 
-        Usable EV power of exactly 0 W is the ordinary raw-grid path and does
-        not need a battery measurement. Positive EV power uses the pure
-        exclusion model. Unusable EV power, or positive EV power without a
-        fresh battery measurement, uses the guarded policy.
+        Usable EV power of exactly 0 W uses the raw grid watts, but keeps its
+        own exclusion identity so a grid publication already consumed by an
+        adjusted step can still be recalculated. It does not need a battery
+        measurement. Positive EV power uses the pure exclusion model. Unusable
+        EV power, or positive EV power without a fresh battery measurement,
+        uses the guarded policy.
         """
         grid = self.publications.grid
         battery = self.publications.battery
@@ -779,7 +782,7 @@ class BatteryControlSession:
             return self._guarded_ev_selection(grid, grid_fresh)
         normalized = normalize_ev_power(ev.value, "W")
         if normalized.verdict is EvPowerVerdict.ZERO:
-            return _EvExclusionSelection(_BASIS_RAW, True, True)
+            return self._ev_zero_selection(grid, ev)
         if normalized.verdict is not EvPowerVerdict.POSITIVE or normalized.watts is None:
             return self._guarded_ev_selection(grid, grid_fresh)
         battery_usable = (
@@ -810,6 +813,27 @@ class BatteryControlSession:
             decision.allow_discharge,
             decision.allow_charge,
             decision.feedback_w,
+            publication_id,
+            source_mono,
+        )
+
+    def _ev_zero_selection(self, grid: Sample, ev: Sample) -> _EvExclusionSelection:
+        """Raw-grid watts under an exclusion identity that excludes battery power.
+
+        Permissions stay open here. Operating policy and SoC still combine
+        with them afterwards. This is not the feature-disabled raw-grid basis.
+        """
+        if grid.value is None or grid.source_mono is None:
+            return self._guarded_ev_selection(grid, False)
+        publication_id, source_mono = _composite_feedback_identity(
+            "ev-zero",
+            (("grid", grid), ("ev", ev)),
+        )
+        return _EvExclusionSelection(
+            _BASIS_EV_ZERO,
+            True,
+            True,
+            float(grid.value),
             publication_id,
             source_mono,
         )

@@ -302,8 +302,14 @@ def test_ev_normalized_to_zero_matches_raw_grid() -> None:
         reference = _plan(raw, _settings(), now=0.0, grid=grid, battery=battery)
         assert adjusted.proposed_w == reference.proposed_w
         assert excluded.pd.requested_w == raw.pd.requested_w
-        assert excluded.pd.last_publication_id == "g0"
-        assert excluded._feedback_basis == "raw"
+        assert excluded._feedback_basis == "ev_zero"
+        identity = excluded.pd.last_publication_id
+        assert identity is not None
+        assert identity.startswith("ev-zero|")
+        assert identity != "g0"
+        assert f"id:{publication_id}" in identity
+        assert "id:g0" in identity
+        assert "battery=" not in identity
 
 
 def test_unusable_ev_on_import_closes_both_directions_without_release() -> None:
@@ -829,3 +835,168 @@ def test_ev_exclusion_never_requests_released() -> None:
         assert plan.kind != "released"
         assert plan.reason_code != const.REASON_RELEASED
         assert session.kind != "released"
+
+
+def test_positive_ev_then_zero_integrates_against_the_consumed_grid() -> None:
+    settings = _settings(exclude_ev=True, min_interval_s=1.0)
+    excluded = BatteryControlSession()
+    followed = BatteryControlSession()
+    battery = _sample(0.0, "b", 0.0)
+    grid = _sample(8200.0, "g1", 0.0)
+    positive = _sample(7000.0, "e-pos", 0.0)
+    _plan(excluded, settings, now=0.0, grid=grid, battery=battery, ev=positive)
+    _plan(followed, settings, now=0.0, grid=grid, battery=battery, ev=positive)
+    assert excluded.publications.last_integrated_grid_publication_id == "g1"
+    assert excluded.pd.last_publication_id is not None
+    assert excluded.pd.last_publication_id.startswith("ev-known|")
+    positive_request = excluded.pd.requested_w
+
+    no_battery = ChannelSample(value_w=None, available=False)
+    zero = _plan(
+        excluded,
+        settings,
+        now=1.0,
+        grid=_sample(8200.0, "g1", 0.0),
+        battery=no_battery,
+        ev=_sample(0.0, "e-zero", 1.0),
+    )
+    raw_grid = _plan(
+        followed,
+        _settings(exclude_ev=False, min_interval_s=1.0),
+        now=1.0,
+        grid=_sample(8200.0, "g2", 1.0),
+        battery=no_battery,
+    )
+
+    assert zero.proposed_w == raw_grid.proposed_w
+    assert excluded.pd.requested_w == followed.pd.requested_w
+    assert excluded.pd.requested_w != positive_request
+    identity = excluded.pd.last_publication_id
+    assert identity is not None
+    assert identity.startswith("ev-zero|")
+    assert "id:g1" in identity
+    assert "id:e-zero" in identity
+    assert "battery=" not in identity
+    assert identity != "g1"
+    assert excluded.publications.grid.publication_id == "g1"
+    assert excluded.publications.last_integrated_grid_publication_id == "g1"
+    assert excluded.pd.last_integrate_mono == 1.0
+    assert excluded._feedback_basis == "ev_zero"
+    assert zero.release is False
+
+
+def test_repeated_ev_zero_composite_does_not_integrate_twice() -> None:
+    session = BatteryControlSession()
+    settings = _settings(exclude_ev=True, min_interval_s=1.0)
+    grid = _sample(1000.0, "g1", 0.0)
+    ev = _sample(0.0, "e0", 0.0)
+    no_battery = ChannelSample(value_w=None, available=False)
+    _plan(session, settings, now=0.0, grid=grid, battery=no_battery, ev=ev)
+    requested = session.pd.requested_w
+    identity = session.pd.last_publication_id
+    integrated_at = session.pd.last_integrate_mono
+
+    repeat = _plan(session, settings, now=1.0, grid=grid, battery=no_battery, ev=ev)
+    assert repeat.proposed_w == requested
+    assert session.pd.requested_w == requested
+    assert session.pd.last_publication_id == identity
+    assert session.pd.last_integrate_mono == integrated_at
+    assert identity is not None
+    assert identity.startswith("ev-zero|")
+    assert "battery=" not in identity
+
+
+def test_ev_zero_waits_for_the_interval_gate_then_integrates() -> None:
+    session = BatteryControlSession()
+    settings = _settings(exclude_ev=True, min_interval_s=5.0)
+    _plan(
+        session,
+        settings,
+        now=0.0,
+        grid=_sample(8200.0, "g1", 0.0),
+        battery=_sample(0.0, "b1", 0.0),
+        ev=_sample(7000.0, "e-pos", 0.0),
+    )
+    held_request = session.pd.requested_w
+    held_integrate = session.pd.last_integrate_mono
+    no_battery = ChannelSample(value_w=None, available=False)
+    ev_zero = _sample(24.0, "e-zero", 1.0)
+    held = _plan(
+        session,
+        settings,
+        now=1.0,
+        grid=_sample(8200.0, "g1", 0.0),
+        battery=no_battery,
+        ev=ev_zero,
+    )
+    assert held.send_w is None
+    assert session.pd.requested_w == held_request
+    assert session.pd.last_integrate_mono == held_integrate
+    assert session.pd.last_publication_id is None
+    assert session._feedback_basis == "ev_zero"
+    assert session.publications.ev_is_usable()
+    assert session.publications.ev.value == 24.0
+
+    opened = _plan(
+        session,
+        settings,
+        now=5.0,
+        grid=_sample(8200.0, "g1", 0.0),
+        battery=no_battery,
+        ev=ev_zero,
+    )
+    assert opened.proposed_w > held_request
+    assert session.pd.requested_w > held_request
+    identity = session.pd.last_publication_id
+    assert identity is not None
+    assert identity.startswith("ev-zero|")
+    assert "id:e-zero" in identity
+    assert "id:g1" in identity
+    assert "battery=" not in identity
+    assert session.publications.grid.publication_id == "g1"
+    assert session.pd.last_integrate_mono == 1.0
+
+
+def test_exclude_ev_disabled_uses_the_raw_grid_path() -> None:
+    grid = _sample(1000.0, "g-raw", 0.0)
+    ev = _sample(0.0, "e0", 0.0)
+    disabled = BatteryControlSession()
+    raw = BatteryControlSession()
+    off = _plan(disabled, _settings(exclude_ev=False), now=0.0, grid=grid, ev=ev)
+    reference = _plan(raw, _settings(), now=0.0, grid=grid)
+    assert off.proposed_w == reference.proposed_w
+    assert disabled.pd.requested_w == raw.pd.requested_w
+    assert disabled.pd.last_publication_id == "g-raw"
+    assert disabled._feedback_basis == "raw"
+
+    session = BatteryControlSession()
+    _plan(
+        session,
+        _settings(exclude_ev=True, min_interval_s=5.0),
+        now=0.0,
+        grid=_sample(1000.0, "g0", 0.0),
+        ev=_sample(0.0, "e0", 0.0),
+    )
+    assert session._feedback_basis == "ev_zero"
+    session.pd.requested_w = 800
+    session.pd.last_direction = 1
+    session.pd.grid_filtered = 400.0
+    session.pd.zero_cross_holding = True
+    session.pd.opposite_since_mono = 0.25
+    session.pd.last_opportunity_mono = 0.0
+    session.pd.last_integrate_mono = 0.0
+    session.ledger.accepted_w = 800
+    before = _snapshot(session)
+    _plan(
+        session,
+        _settings(exclude_ev=False, min_interval_s=5.0),
+        now=1.0,
+        grid=_sample(1000.0, "g0", 0.0),
+        ev=_sample(0.0, "e0", 0.0),
+        reported=800,
+    )
+    assert session._feedback_basis == "raw"
+    assert session.pd.last_publication_id is None
+    assert session.pd.last_source_mono is None
+    assert _snapshot(session) == before
+    assert session.kind == "pd"
