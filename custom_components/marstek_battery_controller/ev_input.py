@@ -6,12 +6,23 @@ the fields it has already read.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
+import logging
 from typing import Any, Mapping
+
+from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from . import const
 from .ev_feedback import normalize_ev_power
 from .pd_session import ChannelSample
+
+_LOGGER = logging.getLogger(__name__)
+
+# psutil's process creation time and Home Assistant's last_reported clock can
+# disagree by a small amount. A report this close to process start is still
+# from the current process.
+HA_PROCESS_START_TOLERANCE = timedelta(seconds=2)
 
 _UNAVAILABLE = ChannelSample(value_w=None, available=False)
 _MISSING_STATES = frozenset({None, "", "unknown", "unavailable"})
@@ -72,6 +83,37 @@ def store_ev_sensor_choice(
     return entity
 
 
+def read_ha_process_started_utc() -> datetime:
+    """Return this Python process's creation time as a timezone-aware UTC datetime.
+
+    The psutil lookup can block. Call it through ``async_add_executor_job``.
+    """
+    import psutil_home_assistant as ha_psutil
+
+    created = ha_psutil.PsutilWrapper().psutil.Process().create_time()
+    started = dt_util.utc_from_timestamp(float(created))
+    if started.tzinfo is None:
+        raise ValueError("Home Assistant process start time has no timezone")
+    return started
+
+
+async def async_resolve_ha_process_started_utc(hass: HomeAssistant) -> datetime:
+    """Process start time, or the setup time when that lookup fails.
+
+    Failure is conservative: EV reports from before this setup stay unused
+    until the sensor reports again. Setup itself continues.
+    """
+    try:
+        return await hass.async_add_executor_job(read_ha_process_started_utc)
+    except Exception:
+        _LOGGER.warning(
+            "Could not read the Home Assistant process start time; "
+            "EV reports from before this setup are ignored until the sensor reports again",
+            exc_info=True,
+        )
+        return dt_util.utcnow()
+
+
 def ev_channel_sample(
     *,
     entity_id: str,
@@ -79,7 +121,7 @@ def ev_channel_sample(
     unit: str | None,
     restored: bool,
     last_reported: datetime | None,
-    ha_start: datetime | None,
+    ha_process_started_utc: datetime | None,
     now_mono: float,
     now_wall: datetime,
 ) -> ChannelSample:
@@ -87,17 +129,19 @@ def ev_channel_sample(
 
     ``last_updated`` is intentionally not an argument. A missing
     ``last_reported``, a restored state, or a report from before this Home
-    Assistant run is unavailable. The same accepted report keeps one
+    Assistant process is unavailable. Reports up to
+    ``HA_PROCESS_START_TOLERANCE`` before the process start still count, because
+    the two clocks are not identical. The same accepted report keeps one
     publication id so later calculator ticks do not look like new observations.
     """
     if (
         restored
         or last_reported is None
-        or ha_start is None
+        or ha_process_started_utc is None
         or raw_state in _MISSING_STATES
         or last_reported.tzinfo is None
-        or ha_start.tzinfo is None
-        or last_reported < ha_start
+        or ha_process_started_utc.tzinfo is None
+        or last_reported < ha_process_started_utc - HA_PROCESS_START_TOLERANCE
     ):
         return _UNAVAILABLE
     normalized = normalize_ev_power(raw_state, unit)

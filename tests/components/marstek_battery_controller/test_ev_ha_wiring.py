@@ -6,6 +6,8 @@ from datetime import timedelta
 import json
 from pathlib import Path
 
+import pytest
+
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -21,8 +23,11 @@ from custom_components.marstek_battery_controller.coordinator import (
 )
 from custom_components.marstek_battery_controller.discovery import ResolvedEntities
 from custom_components.marstek_battery_controller.ev_input import (
+    HA_PROCESS_START_TOLERANCE,
+    async_resolve_ha_process_started_utc,
     effective_exclude_ev,
     ev_channel_sample,
+    read_ha_process_started_utc,
     requested_exclude_ev,
     resolve_ev_power_entity,
     store_ev_sensor_choice,
@@ -72,13 +77,19 @@ class _Writer:
         self.rs485_on = False
 
 
-async def _coordinator(hass, ev: str | None = None) -> MarstekBatteryCoordinator:
+async def _coordinator(
+    hass,
+    ev: str | None = None,
+    *,
+    process_started=None,
+) -> MarstekBatteryCoordinator:
     coordinator = MarstekBatteryCoordinator(
         hass,
         entry_id="entry-test",
         runtime=_runtime(ev),
         storage=MarstekStorage(hass),
         initial_previous_mode=None,
+        ha_process_started_utc=process_started or dt_util.utcnow(),
     )
     coordinator.writer = _Writer()
     coordinator._write_grace_until = None
@@ -117,7 +128,7 @@ def _publish_ev(hass, coordinator, value: str, *, unit: str | None = "W", restor
     state = hass.states.get(_EV)
     assert state is not None
     if reported:
-        state.last_reported = when or coordinator._boot_started
+        state.last_reported = when or coordinator.ha_process_started_utc
     else:
         state.last_reported = None
 
@@ -193,7 +204,7 @@ def _sample(**kwargs):
         unit="W",
         restored=False,
         last_reported=start,
-        ha_start=start,
+        ha_process_started_utc=start,
         now_mono=10.0,
         now_wall=start,
     )
@@ -222,20 +233,27 @@ def test_ev_units_and_invalid_values_do_not_use_absolute_power() -> None:
 
 def test_ev_publication_accepts_only_this_boot_and_keeps_its_identity() -> None:
     start = dt_util.utcnow()
-    restored = _sample(restored=True, last_reported=start, ha_start=start)
+    restored = _sample(restored=True, last_reported=start, ha_process_started_utc=start)
     assert restored.available is False
 
-    before = _sample(last_reported=start - timedelta(seconds=1), ha_start=start)
+    within_tolerance = _sample(
+        last_reported=start - timedelta(seconds=1),
+        ha_process_started_utc=start,
+    )
+    assert within_tolerance.available is True
+    assert HA_PROCESS_START_TOLERANCE == timedelta(seconds=2)
+
+    before = _sample(last_reported=start - timedelta(seconds=30), ha_process_started_utc=start)
     assert before.available is False
 
-    missing = _sample(last_reported=None, ha_start=start)
+    missing = _sample(last_reported=None, ha_process_started_utc=start)
     assert missing.available is False
 
-    accepted = _sample(raw_state="1500", last_reported=start, ha_start=start, now_wall=start)
+    accepted = _sample(raw_state="1500", last_reported=start, ha_process_started_utc=start, now_wall=start)
     later = _sample(
         raw_state="1500",
         last_reported=start,
-        ha_start=start,
+        ha_process_started_utc=start,
         now_mono=50.0,
         now_wall=start + timedelta(days=2),
     )
@@ -338,7 +356,7 @@ async def test_coordinator_rejects_bad_ev_samples_and_uses_valid_ones(hass) -> N
     assert coordinator._session.publications.ev.available is False
 
     hass.states.async_set(_GRID, "1500")
-    _publish_ev(hass, coordinator, "1.5", unit="kW", when=coordinator._boot_started + timedelta(seconds=1))
+    _publish_ev(hass, coordinator, "1.5", unit="kW", when=coordinator.ha_process_started_utc + timedelta(seconds=1))
     await _run(hass, coordinator)
     assert coordinator._session.publications.ev.value == 1500.0
     assert coordinator.target_setpoint == 0
@@ -360,7 +378,7 @@ async def test_restored_and_pre_boot_ev_states_are_ignored(hass) -> None:
         hass,
         coordinator,
         "7000",
-        when=coordinator._boot_started - timedelta(minutes=1),
+        when=coordinator.ha_process_started_utc - timedelta(minutes=1),
     )
     await _run(hass, coordinator)
     assert coordinator._session.publications.ev.available is False
@@ -433,7 +451,7 @@ async def test_ev_state_changes_recalculate_without_becoming_a_critical_sensor(h
     baseline = calls["n"]
     assert baseline >= 1
 
-    _publish_ev(hass, coordinator, "500", when=coordinator._boot_started + timedelta(seconds=1))
+    _publish_ev(hass, coordinator, "500", when=coordinator.ha_process_started_utc + timedelta(seconds=1))
     await hass.async_block_till_done()
     assert calls["n"] > baseline
     assert "ev" not in coordinator._sensor_bad_since
@@ -527,3 +545,162 @@ async def test_listener_reloads_for_an_ev_entity_change_only(hass) -> None:
     coordinator.runtime.ev_power_entity_id = _EV
     await _async_update_listener(hass, entry)
     assert scheduled == [entry.entry_id]
+
+
+async def test_report_before_coordinator_creation_survives_reload(hass) -> None:
+    process_started = dt_util.utcnow() - timedelta(minutes=10)
+    reported = process_started + timedelta(minutes=1)
+    coordinator = await _coordinator(hass, ev=_EV, process_started=process_started)
+    coordinator.configure_startup_ev(_EV, {})
+    _publish_core(hass)
+    hass.states.async_set(_GRID, "8200")
+    hass.states.async_set(_BATTERY, "0")
+    _publish_ev(hass, coordinator, "7000", when=reported)
+    await _run(hass, coordinator)
+    assert reported < dt_util.utcnow()
+    assert coordinator._session.publications.ev_is_usable()
+    assert coordinator._session.publications.ev.value == 7000.0
+    assert coordinator.target_setpoint > 0
+    assert coordinator._mode != const.MODE_RELEASED
+
+    reloaded = await _coordinator(hass, ev=_EV, process_started=process_started)
+    reloaded.configure_startup_ev(_EV, {})
+    await _run(hass, reloaded)
+    assert reloaded.ha_process_started_utc == process_started
+    assert reloaded._session.publications.ev_is_usable()
+    assert reloaded._session.publications.ev.value == 7000.0
+    assert reloaded._mode != const.MODE_RELEASED
+
+
+async def test_process_start_lookup_failure_uses_setup_time(hass, monkeypatch, caplog) -> None:
+    def _fail() -> None:
+        raise OSError("psutil unavailable")
+
+    monkeypatch.setattr(
+        "custom_components.marstek_battery_controller.ev_input.read_ha_process_started_utc",
+        _fail,
+    )
+    caplog.set_level("WARNING")
+    before = dt_util.utcnow()
+    started = await async_resolve_ha_process_started_utc(hass)
+    after = dt_util.utcnow()
+    assert before <= started <= after
+    assert "process start" in caplog.text.lower()
+
+    coordinator = await _coordinator(hass, ev=_EV, process_started=started)
+    coordinator.configure_startup_ev(_EV, {})
+    _publish_core(hass)
+    hass.states.async_set(_GRID, "2000")
+    _publish_ev(hass, coordinator, "1500", when=started - timedelta(minutes=1))
+    await _run(hass, coordinator)
+    assert coordinator._session.publications.ev.available is False
+    assert coordinator._mode == const.MODE_SELF_CONSUMPTION
+
+
+async def test_process_start_is_read_in_an_executor_and_stable_across_reload(hass, monkeypatch) -> None:
+    expected = dt_util.utcnow() - timedelta(hours=1)
+    seen: list[object] = []
+    real = hass.async_add_executor_job
+
+    def _spy(func, *args):
+        seen.append(func)
+        return real(func, *args)
+
+    monkeypatch.setattr(hass, "async_add_executor_job", _spy)
+    monkeypatch.setattr(
+        "custom_components.marstek_battery_controller.ev_input.read_ha_process_started_utc",
+        lambda: expected,
+    )
+    first = await async_resolve_ha_process_started_utc(hass)
+    second = await async_resolve_ha_process_started_utc(hass)
+    assert first == second == expected
+    assert seen
+
+
+def test_installed_psutil_reports_an_aware_process_start() -> None:
+    pytest.importorskip("psutil_home_assistant")
+    started = read_ha_process_started_utc()
+    assert started.tzinfo is not None
+    assert started <= dt_util.utcnow() + timedelta(seconds=2)
+
+
+async def test_same_value_ev_report_recalculates_once_and_unsubscribes(hass, monkeypatch) -> None:
+    from homeassistant.helpers import event as ha_event
+
+    real = getattr(ha_event, "async_track_state_report_event", None)
+    live: list[dict[str, object]] = []
+
+    def _track(hass, entity_ids, action, *args, **kwargs):
+        ids = [entity_ids] if isinstance(entity_ids, str) else list(entity_ids)
+        assert ids == [_EV]
+        entry = {"action": action, "alive": True}
+        live.append(entry)
+        real_unsub = real(hass, entity_ids, action, *args, **kwargs) if real is not None else None
+
+        def _unsub() -> None:
+            entry["alive"] = False
+            if real_unsub is not None:
+                real_unsub()
+
+        return _unsub
+
+    monkeypatch.setattr(ha_event, "async_track_state_report_event", _track, raising=False)
+
+    def _count(coordinator: MarstekBatteryCoordinator) -> dict[str, int]:
+        calls = {"n": 0}
+        original = coordinator._async_run_calculator
+
+        async def _wrapped(*args, **kwargs):
+            calls["n"] += 1
+            return await original(*args, **kwargs)
+
+        coordinator._async_run_calculator = _wrapped  # type: ignore[method-assign]
+        return calls
+
+    process_started = dt_util.utcnow() - timedelta(minutes=5)
+    first = await _coordinator(hass, ev=_EV, process_started=process_started)
+    first.configure_startup_ev(_EV, {})
+    _publish_core(hass)
+    hass.states.async_set(_GRID, "8200")
+    hass.states.async_set(_BATTERY, "0")
+    _publish_ev(hass, first, "7000", when=process_started + timedelta(minutes=1))
+    first_calls = _count(first)
+    first.async_setup_listeners()
+    await hass.async_block_till_done()
+    baseline = first_calls["n"]
+    assert baseline >= 1
+    assert len(live) == 1
+
+    async def _report_same_value() -> None:
+        if real is None:
+            state = hass.states.get(_EV)
+            assert state is not None
+            state.last_reported = dt_util.utcnow()
+            for entry in live:
+                if entry["alive"]:
+                    entry["action"](None)  # type: ignore[operator]
+            return
+        hass.states.async_set(_EV, "7000", {"unit_of_measurement": "W"})
+
+    await _report_same_value()
+    await hass.async_block_till_done()
+    assert first_calls["n"] == baseline + 1
+
+    await first.async_shutdown()
+    assert live[0]["alive"] is False
+    stalled = first_calls["n"]
+    await _report_same_value()
+    await hass.async_block_till_done()
+    assert first_calls["n"] == stalled
+
+    second = await _coordinator(hass, ev=_EV, process_started=process_started)
+    second.configure_startup_ev(_EV, {})
+    second_calls = _count(second)
+    second.async_setup_listeners()
+    await hass.async_block_till_done()
+    second_baseline = second_calls["n"]
+    await _report_same_value()
+    await hass.async_block_till_done()
+    assert second_calls["n"] == second_baseline + 1
+    assert first_calls["n"] == stalled
+    await second.async_shutdown()

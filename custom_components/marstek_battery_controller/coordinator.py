@@ -144,6 +144,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         runtime: CoordinatorRuntimeConfig,
         storage: MarstekStorage,
         initial_previous_mode: str | None,
+        ha_process_started_utc: datetime | None = None,
     ) -> None:
         """Wire HA, entities, smoothing, and writer."""
         super().__init__(
@@ -210,7 +211,9 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._capacity_tariff_enabled = const.DEFAULT_CAPACITY_TARIFF_ENABLED
         self._exclude_ev_requested = False
         self._exclude_ev_persisted = False
-        self._boot_started = dt_util.utcnow()
+        # Injected by setup from the Home Assistant process start. None rejects
+        # EV samples, which is safe until setup supplies the timestamp.
+        self.ha_process_started_utc = ha_process_started_utc
         self._mode = const.DEFAULT_MODE
         self._inherited_released_uncertainty = self._mode == const.MODE_RELEASED
         self._min_soc = const.DEFAULT_MIN_SOC
@@ -687,11 +690,9 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             entities.append(self.runtime.cap_now_entity_id)
         if self.runtime.monthly_peak_entity_id:
             entities.append(self.runtime.monthly_peak_entity_id)
-        if (
-            self.runtime.ev_power_entity_id
-            and self.runtime.ev_power_entity_id not in entities
-        ):
-            entities.append(self.runtime.ev_power_entity_id)
+        ev_entity_id = self.runtime.ev_power_entity_id
+        if ev_entity_id and ev_entity_id not in entities:
+            entities.append(ev_entity_id)
 
         @callback
         def _on_state(event: Event) -> None:
@@ -701,6 +702,10 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._state_change_unsubs.append(
             async_track_state_change_event(self.hass, entities, _on_state)
         )
+        if ev_entity_id:
+            # State changes and same-value reports are separate Home Assistant
+            # events, so one publication schedules one calculation.
+            self._listen_ev_reports(ev_entity_id)
 
         self._schedule_tick()
         if self._write_grace_until is not None:
@@ -714,6 +719,27 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "protection window is empty (§16)",
             )
         self.hass.async_create_task(self._async_run_calculator())
+
+    def _listen_ev_reports(self, entity_id: str) -> None:
+        """Recalculate when the EV sensor reports the same value again.
+
+        The listener is filtered to this entity. Unload uses the same
+        unsubscribe list as the state-change listeners.
+        """
+        from homeassistant.helpers import event as ha_event
+
+        tracker = getattr(ha_event, "async_track_state_report_event", None)
+        if tracker is None:
+            _LOGGER.debug(
+                "Home Assistant has no state-reported listener; an unchanged EV value waits for a new state"
+            )
+            return
+
+        @callback
+        def _on_ev_report(_event: Event) -> None:
+            self._async_recalc()
+
+        self._state_change_unsubs.append(tracker(self.hass, entity_id, _on_ev_report))
 
     async def _async_check_manual_auto_exit(self) -> None:
         """Restore previous_mode when manual target reached."""
@@ -965,7 +991,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._channel_sample(grid_state, now_mono, now_wall)
 
     def _ev_sample(self, now_mono: float, now_wall: datetime) -> ChannelSample:
-        """EV publication for this Home Assistant run.
+        """EV publication for this Home Assistant process.
 
         Grid and battery may fall back from last_reported to last_updated.
         EV power may not. Invalid telemetry is unavailable immediately and is
@@ -984,7 +1010,7 @@ class MarstekBatteryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             unit=attributes.get("unit_of_measurement"),
             restored=bool(attributes.get(ATTR_RESTORED)),
             last_reported=getattr(state, "last_reported", None),
-            ha_start=self._boot_started,
+            ha_process_started_utc=self.ha_process_started_utc,
             now_mono=now_mono,
             now_wall=now_wall,
         )

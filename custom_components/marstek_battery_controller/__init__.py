@@ -9,7 +9,7 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from . import const
-from .ev_input import resolve_ev_power_entity
+from .ev_input import async_resolve_ha_process_started_utc, resolve_ev_power_entity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -148,6 +148,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     ev_entity_id = resolve_ev_power_entity(entry.options, entry.data)
+    ha_process_started_utc = await async_resolve_ha_process_started_utc(hass)
     runtime = CoordinatorRuntimeConfig(
         resolved=resolved,
         grid_entity_id=grid_entity_id,
@@ -163,6 +164,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         runtime=runtime,
         storage=storage,
         initial_previous_mode=prev_mode,
+        ha_process_started_utc=ha_process_started_utc,
     )
     # Before options setters schedule work and before the first refresh.
     coordinator.configure_startup_ev(ev_entity_id, entry.options)
